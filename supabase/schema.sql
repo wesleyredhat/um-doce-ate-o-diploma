@@ -44,6 +44,8 @@ create table if not exists public.orders (
 create index if not exists orders_created_idx on public.orders (created_at desc);
 create index if not exists orders_phone_idx on public.orders (phone);
 create index if not exists orders_status_idx on public.orders (status);
+alter table public.orders add column if not exists coupon_code text;
+alter table public.orders add column if not exists discount numeric(10, 2) not null default 0;
 
 create table if not exists public.news (
   id uuid primary key default gen_random_uuid(),
@@ -83,6 +85,57 @@ create table if not exists public.settings (
   value jsonb not null default '{}'
 );
 
+-- Cupons de desconto. Regras em coupon_discount(); espelho em JS: assets/js/coupons.js.
+create table if not exists public.coupons (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique check (code ~ '^[A-Z0-9]{3,20}$'),
+  kind text not null default 'percent' check (kind in ('percent', 'fixed')),
+  value numeric(10, 2) not null,
+  min_order numeric(10, 2) not null default 0 check (min_order >= 0),
+  starts_on date,
+  ends_on date,
+  max_uses int check (max_uses > 0),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  check (value > 0 and (kind = 'fixed' or value <= 100)),
+  check (ends_on >= starts_on)
+);
+
+-- Quem respondeu "parar promoções" ou "parar novidades": não recebe campanhas nem novidades.
+create table if not exists public.optouts (
+  phone_key text primary key,
+  phone text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Campanhas pelo WhatsApp: cada pessoa vira uma linha em campaign_sends, que o bot envia aos poucos (bot/sender.js).
+create table if not exists public.campaigns (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  body text not null,
+  coupon_id uuid references public.coupons (id) on delete set null,
+  audience jsonb not null default '{}',
+  status text not null default 'pausada' check (status in ('enviando', 'pausada', 'concluida', 'cancelada')),
+  pause_reason text,
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+create table if not exists public.campaign_sends (
+  id uuid primary key default gen_random_uuid(),
+  campaign_id uuid not null references public.campaigns (id) on delete cascade,
+  phone text not null,
+  phone_key text not null,
+  name text not null default '',
+  status text not null default 'pendente' check (status in ('pendente', 'enviando', 'enviada', 'falhou', 'pulada')),
+  error text,
+  claimed_at timestamptz,
+  sent_at timestamptz,
+  unique (campaign_id, phone_key)
+);
+create index if not exists campaign_sends_queue_idx on public.campaign_sends (campaign_id, status);
+create index if not exists campaign_sends_sent_idx on public.campaign_sends (sent_at) where status = 'enviada';
+
 -- ------------------------------------------------------------------
 -- Funções
 -- ------------------------------------------------------------------
@@ -96,9 +149,49 @@ begin new.updated_at = now(); return new; end $$;
 drop trigger if exists orders_touch on public.orders;
 create trigger orders_touch before update on public.orders for each row execute function public.touch_updated_at();
 
--- Cria o pedido calculando preço e custo NO SERVIDOR (o cliente nunca define valores).
+-- Mesma pessoa com e sem o 9 do celular: o número antigo ganha o 9; fixo fica como está.
+-- Igual a phoneKey (assets/js/coupons.js) e a samePhone (bot-engine.js).
+create or replace function public.phone_key(p text) returns text
+language sql immutable set search_path = public as $$
+  with a as (select regexp_replace(coalesce(p, ''), '\D', '', 'g') as d),
+       b as (select case when length(d) in (10, 11) then '55' || d else d end as d from a)
+  select case when d ~ '^55[0-9]{10}$' and substr(d, 5, 1) between '6' and '9' then left(d, 4) || '9' || substr(d, 5) else d end from b;
+$$;
+
+-- Regras do cupom (espelho em JS: assets/js/coupons.js). Devolve o desconto ou recusa com a mensagem para o cliente.
+-- p_lock trava a linha do cupom até o fim da transação: dois pedidos ao mesmo tempo não passam da cota.
+create or replace function public.coupon_discount(p_code text, p_phone text, p_subtotal numeric, p_lock boolean default false)
+returns numeric language plpgsql set search_path = public as $$
+declare
+  c coupons;
+  v_today date := (now() at time zone 'America/Sao_Paulo')::date;
+begin
+  if p_lock then
+    select * into c from coupons where code = upper(trim(p_code)) for update;
+  else
+    select * into c from coupons where code = upper(trim(p_code));
+  end if;
+  if not found then raise exception 'Cupom não encontrado'; end if;
+  if not c.active then raise exception 'Cupom pausado'; end if;
+  if c.starts_on is not null and v_today < c.starts_on then raise exception 'Cupom ainda não começou'; end if;
+  if c.ends_on is not null and v_today > c.ends_on then raise exception 'Cupom expirado'; end if;
+  if c.max_uses is not null
+     and (select count(*) from orders where coupon_code = c.code and status <> 'cancelado') >= c.max_uses then
+    raise exception 'Cupom esgotado';
+  end if;
+  if exists (select 1 from orders where coupon_code = c.code and status <> 'cancelado' and phone_key(phone) = phone_key(p_phone)) then
+    raise exception 'Você já usou este cupom';
+  end if;
+  if p_subtotal < c.min_order then
+    raise exception 'Vale para pedidos a partir de R$ %', replace(to_char(c.min_order, 'FM999990.00'), '.', ',');
+  end if;
+  return round(least(p_subtotal, case when c.kind = 'percent' then p_subtotal * c.value / 100 else c.value end), 2);
+end $$;
+
+-- Cria o pedido calculando preço, custo e desconto NO SERVIDOR (o cliente nunca define valores).
+drop function if exists public.place_order(text, text, jsonb, text, text);
 create or replace function public.place_order(
-  p_name text, p_phone text, p_items jsonb, p_channel text default 'web', p_notes text default ''
+  p_name text, p_phone text, p_items jsonb, p_channel text default 'web', p_notes text default '', p_coupon text default null
 ) returns json
 -- "extensions": no Supabase o pgcrypto (gen_random_bytes, usado no código do pedido) fica nesse esquema.
 language plpgsql security definer set search_path = public, extensions as $$
@@ -106,6 +199,8 @@ declare
   v_items jsonb := '[]'::jsonb;
   v_total numeric := 0;
   v_cost numeric := 0;
+  v_coupon text := nullif(upper(trim(coalesce(p_coupon, ''))), '');
+  v_discount numeric := 0;
   v_code text;
   r record;
   v_accepting boolean;
@@ -131,15 +226,20 @@ begin
   end loop;
   if jsonb_array_length(v_items) = 0 then raise exception 'Produto indisponível'; end if;
 
+  if v_coupon is not null then
+    v_discount := coupon_discount(v_coupon, p_phone, v_total, true);
+  end if;
+
   loop
     v_code := 'DD-' || upper(substr(translate(encode(gen_random_bytes(6), 'base64'), '+/=0O1Il', ''), 1, 4));
     exit when length(v_code) = 7 and not exists (select 1 from orders where code = v_code);
   end loop;
 
-  insert into orders (code, customer_name, phone, items, total, cost_total, channel, notes)
-  values (v_code, trim(p_name), regexp_replace(p_phone, '\D', '', 'g'), v_items, v_total, v_cost, p_channel, left(coalesce(p_notes, ''), 300));
+  insert into orders (code, customer_name, phone, items, total, cost_total, channel, notes, coupon_code, discount)
+  values (v_code, trim(p_name), regexp_replace(p_phone, '\D', '', 'g'), v_items, v_total - v_discount, v_cost, p_channel,
+          left(coalesce(p_notes, ''), 300), v_coupon, v_discount);
 
-  return json_build_object('code', v_code, 'total', v_total);
+  return json_build_object('code', v_code, 'total', v_total - v_discount, 'subtotal', v_total, 'discount', v_discount, 'coupon', v_coupon);
 end $$;
 
 -- Cartão fidelidade: retorna só a contagem (não expõe pedidos).
@@ -148,7 +248,73 @@ language sql stable security definer set search_path = public as $$
   select count(*)::int from orders where phone = regexp_replace(p_phone, '\D', '', 'g') and status = 'entregue';
 $$;
 
-grant execute on function public.place_order(text, text, jsonb, text, text) to anon, authenticated;
+-- Prévia do cupom para o site e o bot: as mesmas regras de place_order, sem gravar nada.
+create or replace function public.check_coupon(p_code text, p_phone text default '', p_items jsonb default '[]')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  c coupons;
+  v_subtotal numeric := 0;
+  v_discount numeric;
+  v_out jsonb;
+begin
+  select * into c from coupons where code = upper(trim(coalesce(p_code, '')));
+  if jsonb_typeof(p_items) = 'array' then
+    select coalesce(sum(least(greatest((i->>'qty')::int, 1), 500) * p.price), 0) into v_subtotal
+    from jsonb_array_elements(p_items) i
+    join products p on p.id = (i->>'product_id')::uuid and p.active;
+  end if;
+  v_out := jsonb_build_object(
+    'code', upper(trim(coalesce(p_code, ''))),
+    'subtotal', v_subtotal,
+    'min_order', coalesce(c.min_order, 0),
+    'label', case
+      when c.id is null then ''
+      when c.kind = 'percent' then replace(rtrim(rtrim(c.value::text, '0'), '.'), '.', ',') || '%'
+      else 'R$ ' || replace(to_char(c.value, 'FM999990.00'), '.', ',')
+    end);
+  begin
+    v_discount := coupon_discount(p_code, coalesce(p_phone, ''), v_subtotal);
+  exception when raise_exception then
+    return v_out || jsonb_build_object('valid', false, 'message', sqlerrm);
+  end;
+  return v_out || jsonb_build_object('valid', true, 'discount', v_discount, 'total', v_subtotal - v_discount);
+end $$;
+
+-- Clientes = quem já comprou (pedido não cancelado), agrupado por phone_key.
+-- security_invoker: vale a RLS de orders, então só admin enxerga. Espelho em JS: customersFromOrders (assets/js/campaigns.js).
+drop view if exists public.admin_customers;
+create view public.admin_customers with (security_invoker = true) as
+with valid as (
+  select o.*, phone_key(o.phone) as k from orders o where o.status <> 'cancelado'
+), base as (
+  select k,
+    (array_agg(phone order by created_at desc))[1] as phone,
+    (array_agg(customer_name order by created_at desc))[1] as name,
+    count(*)::int as orders,
+    sum(total) as spent,
+    min(created_at) as first_order,
+    max(created_at) as last_order
+  from valid group by k
+), lines as (
+  select k, i->>'product_id' as product_id, max(i->>'name') as name, sum((i->>'qty')::int) as qty
+  from valid, jsonb_array_elements(items) i
+  group by k, i->>'product_id'
+), prods as (
+  select k, array_agg(product_id order by qty desc) as product_ids, (array_agg(name order by qty desc))[1:3] as top_products
+  from lines group by k
+)
+select b.k as phone_key, b.phone, b.name, b.orders, b.spent, b.first_order, b.last_order,
+  coalesce(p.product_ids, '{}') as product_ids,
+  coalesce(p.top_products, '{}') as top_products,
+  exists (select 1 from optouts x where x.phone_key = b.k) as opted_out
+from base b left join prods p on p.k = b.k;
+
+grant execute on function public.place_order(text, text, jsonb, text, text, text) to anon, authenticated;
+grant execute on function public.check_coupon(text, text, jsonb) to anon, authenticated;
+-- coupon_discount só é chamada por place_order e check_coupon.
+revoke execute on function public.coupon_discount(text, text, numeric, boolean) from public, anon, authenticated;
+revoke all on public.admin_customers from anon;
+grant select on public.admin_customers to authenticated;
 grant execute on function public.loyalty_stamps(text) to anon, authenticated;
 grant execute on function public.is_admin() to anon, authenticated;
 
@@ -163,6 +329,10 @@ alter table public.bot_admins enable row level security;
 alter table public.subscribers enable row level security;
 alter table public.bot_sessions enable row level security;
 alter table public.settings enable row level security;
+alter table public.coupons enable row level security;
+alter table public.optouts enable row level security;
+alter table public.campaigns enable row level security;
+alter table public.campaign_sends enable row level security;
 
 drop policy if exists "admins read self" on public.admins;
 create policy "admins read self" on public.admins for select using (user_id = auth.uid());
@@ -192,11 +362,25 @@ create policy "settings public read" on public.settings for select using (key = 
 drop policy if exists "settings admin write" on public.settings;
 create policy "settings admin write" on public.settings for all using (public.is_admin()) with check (public.is_admin());
 
+-- Cupons, campanhas e a lista de quem saiu: só admin pelo navegador. O bot usa a chave secreta.
+drop policy if exists "coupons admin" on public.coupons;
+create policy "coupons admin" on public.coupons for all using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "optouts admin" on public.optouts;
+create policy "optouts admin" on public.optouts for all using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "campaigns admin" on public.campaigns;
+create policy "campaigns admin" on public.campaigns for all using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "campaign_sends admin" on public.campaign_sends;
+create policy "campaign_sends admin" on public.campaign_sends for all using (public.is_admin()) with check (public.is_admin());
+
 -- ------------------------------------------------------------------
 -- Dados iniciais
 -- ------------------------------------------------------------------
 insert into public.settings (key, value) values
   ('store', '{"accepting": true, "notice": "Encomendas com 1 dia de antecedência", "pix_key": "", "bot_greeting": "Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma."}')
+on conflict (key) do nothing;
+
+insert into public.settings (key, value) values
+  ('campaigns', '{"daily_limit": 80, "start_hour": 9, "end_hour": 20}')
 on conflict (key) do nothing;
 
 insert into public.products (name, category, description, price, cost, image, badge, featured, sort)
