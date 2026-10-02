@@ -881,8 +881,185 @@ function couponDialog(c = { code: '', kind: 'percent', value: '', min_order: 0, 
     };
   });
 }
-function viewCampaigns(v) { v.innerHTML = emptyState('Em breve', 'Campanhas chegam na próxima etapa.'); }
-function campaignDialog() { location.hash = 'campanhas'; }
+
+/* =================================================================== */
+/* Campanhas                                                            */
+/* =================================================================== */
+const CAMP_STATUS = { enviando: ['Enviando', 'var(--leaf)'], pausada: ['Pausada', 'var(--honey)'], concluida: ['Concluída', 'var(--cocoa)'], cancelada: ['Cancelada', 'var(--muted)'] };
+const SEND_LABEL = { pendente: 'na fila', enviando: 'enviando', enviada: 'enviada', falhou: 'falhou', pulada: 'pulada (pediu para sair)' };
+const countBy = (sends) => sends.reduce((a, s) => ((a[s.status] = (a[s.status] || 0) + 1), a), {});
+const sentToday = () => S.campaigns.flatMap((c) => c.sends).filter((s) => s.status === 'enviada' && Date.parse(s.sent_at) >= spDayStart()).length;
+
+function campaignCard(c) {
+  const n = countBy(c.sends);
+  const total = c.sends.length;
+  const done = (n.enviada || 0) + (n.falhou || 0) + (n.pulada || 0);
+  const queued = (n.pendente || 0) + (n.enviando || 0);
+  const [label, color] = CAMP_STATUS[c.status] || CAMP_STATUS.pausada;
+  return `<article class="camp">
+    <div class="camp__head"><h3>${esc(c.name)}</h3><span class="status-line"><span class="dot" style="background:${color}"></span>${label}</span></div>
+    <p class="hint">${fmtDateTime(c.created_at)} · ${esc(AUDIENCES[c.audience?.type] || 'Público escolhido')}${c.coupon_code ? ` · cupom <b>${esc(c.coupon_code)}</b>` : ''}</p>
+    <div class="progress" role="progressbar" aria-label="Progresso" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
+    <p class="camp__nums"><b>${n.enviada || 0}</b> enviadas de ${total}${queued ? ` · ${queued} na fila` : ''}${n.falhou ? ` · ${n.falhou} falharam` : ''}${n.pulada ? ` · ${n.pulada} puladas` : ''}</p>
+    ${c.status === 'pausada' && c.pause_reason ? `<p class="err">${esc(c.pause_reason)}</p>` : ''}
+    <div class="camp__actions">
+      ${c.status === 'enviando' ? `<button class="btn btn--soft btn--sm" data-camp="${c.id}" data-to="pausada">Pausar</button>` : ''}
+      ${c.status === 'pausada' ? `<button class="btn btn--sm" data-camp="${c.id}" data-to="enviando">Retomar</button>` : ''}
+      ${['enviando', 'pausada'].includes(c.status) ? `<button class="btn btn--ghost btn--sm" data-camp="${c.id}" data-to="cancelada">Cancelar</button>` : ''}
+      <details><summary>Ver lista</summary><ul class="camp__list">${c.sends.map((s) => `<li>${esc(s.name || formatPhone(s.phone))} <small>${SEND_LABEL[s.status] || s.status}${s.error ? `: ${esc(s.error)}` : ''}</small></li>`).join('')}</ul></details>
+    </div>
+  </article>`;
+}
+
+function campaignBotLine(b) {
+  const line = (color, text) => `<p class="status-line"><span class="dot" style="background:var(--${color})"></span>${text}</p>`;
+  if (IS_DEMO) return line('honey', 'Modo demonstração: as campanhas são simuladas e nada é enviado.');
+  if (botAlive(b) && b.state === 'online') return line('leaf', 'Bot online: enviando no ritmo abaixo.');
+  return line('honey', 'Bot desligado ou desconectado: os envios ficam parados até ele voltar (aba Bot WhatsApp).');
+}
+
+async function viewCampaigns(v, signal) {
+  const load = async () => {
+    [S.campaigns, S.campaignCfg] = await Promise.all([store.listCampaigns(), store.getCampaignSettings()]);
+  };
+  v.innerHTML = '<p class="hint">Carregando campanhas…</p>';
+  try { await load(); } catch (e) { v.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  if (signal.aborted) return;
+  const cfg = { ...PACE, ...S.campaignCfg };
+  v.innerHTML = `
+    <div class="cols cols--2">
+      <section class="panel"><div class="panel__head"><div><h2>Campanhas</h2><p>Mensagens em massa pelo WhatsApp do bot</p></div><button class="btn btn--sm" id="newCamp">${icon('plus')} Nova campanha</button></div>
+        <div id="campList"></div>
+      </section>
+      <section class="panel" style="align-self:start"><div class="panel__head"><div><h2>Ritmo de envio</h2><p>Devagar para o WhatsApp não bloquear o número</p></div></div>
+        <div id="campBot"></div>
+        <form class="form" id="paceF">
+          <div class="row">
+            <label class="field"><span>Mensagens por dia</span><input class="input" name="daily_limit" type="number" min="10" max="300" required value="${cfg.daily_limit}" /></label>
+            <label class="field"><span>Das (hora)</span><input class="input" name="start_hour" type="number" min="0" max="23" required value="${cfg.start_hour}" /></label>
+          </div>
+          <div class="row">
+            <label class="field"><span>Até (hora)</span><input class="input" name="end_hour" type="number" min="1" max="24" required value="${cfg.end_hour}" /></label>
+            <span></span>
+          </div>
+          <p class="hint">Entre uma mensagem e outra o bot espera de 20 a 60 segundos. O que passar do limite do dia continua no dia seguinte. Quem responder "parar promoções" sai da lista.</p>
+          <div class="form__actions"><button class="btn btn--soft btn--sm" type="submit">Salvar ritmo</button></div>
+        </form>
+      </section>
+    </div>`;
+  const paintList = () => {
+    $('#campList', v).innerHTML = S.campaigns.map(campaignCard).join('') || emptyState('Nenhuma ainda', 'Crie a primeira campanha.');
+  };
+  const paintBot = () => store.botStatus().then((b) => { if (!signal.aborted) $('#campBot', v).innerHTML = campaignBotLine(b); }).catch(() => {});
+  paintList();
+  paintBot();
+
+  $('#newCamp', v).onclick = () => campaignDialog();
+  on(v, signal, 'click', '[data-camp]', async (b) => {
+    const to = b.dataset.to;
+    if (to === 'cancelada' && !confirm('Cancelar esta campanha? Quem ainda não recebeu não vai receber.')) return;
+    try {
+      await store.setCampaignStatus(b.dataset.camp, to);
+      await load();
+      paintList();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $('#paceF', v).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const s = { daily_limit: Number(f.daily_limit.value), start_hour: Number(f.start_hour.value), end_hour: Number(f.end_hour.value) };
+    if (s.start_hour >= s.end_hour) { toast('O horário final precisa ser depois do inicial', 'err'); return; }
+    await store.saveCampaignSettings(s);
+    S.campaignCfg = await store.getCampaignSettings();
+    toast('Ritmo salvo');
+  };
+
+  // Progresso ao vivo, sem fechar a lista que estiver aberta.
+  const timer = setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      await load();
+      if (!signal.aborted && !v.querySelector('.camp details[open]')) paintList();
+      paintBot();
+    } catch {}
+  }, 15000);
+  signal.addEventListener('abort', () => clearInterval(timer));
+}
+
+async function campaignDialog() {
+  let all;
+  let subscribers;
+  try { [all, subscribers] = await Promise.all([customers(), store.listSubscribers()]); } catch (e) { toast(e.message, 'err'); return; }
+  const usable = S.coupons.filter((c) => ['ativo', 'agendado'].includes(couponState(c, couponUses(c.code).length)));
+  const excluded = new Set();
+  openDialog(`<h2>Nova campanha</h2>
+    <form class="form" id="cpf">
+      <label class="field"><span>Nome (só você vê)</span><input class="input" name="name" required maxlength="60" placeholder="Ex.: Kit semana de provas" /></label>
+      <div class="row">
+        <label class="field"><span>Quem recebe</span><select class="select" name="type">${Object.entries(AUDIENCES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label>
+        <label class="field" id="fDays" hidden><span>Sem pedir há</span><select class="select" name="days"><option value="30">30 dias ou mais</option><option value="60" selected>60 dias ou mais</option><option value="90">90 dias ou mais</option></select></label>
+        <label class="field" id="fProd" hidden><span>Produto</span><select class="select" name="product_id">${S.products.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
+      </div>
+      <details class="aud"><summary id="audCount"></summary><div class="aud__list" id="audList"></div></details>
+      <label class="field"><span>Mensagem</span><textarea class="textarea" name="body" required maxlength="700" rows="5">Oi, {nome}! 🎓🍫 </textarea></label>
+      <p class="hint"><code>{nome}</code> vira o primeiro nome de cada cliente. Use *asteriscos* para negrito.</p>
+      <label class="field"><span>Cupom</span><select class="select" name="coupon_id"><option value="">Sem cupom</option>${usable.map((c) => `<option value="${c.id}">${esc(c.code)} (${couponLabel(c)})</option>`).join('')}</select></label>
+      <div class="field"><span>Prévia</span><div class="msg msg--in preview-msg" id="cpPrev"></div></div>
+      <p class="hint" id="cpEta"></p>
+      <p class="err" id="cperr"></p>
+      <div class="form__actions"><button class="btn" type="submit" id="cpSend">${icon('send')} Enviar</button></div>
+    </form>`, (m, close) => {
+    const f = $('#cpf', m);
+    const filter = () => ({ type: f.type.value, days: Number(f.days.value), product_id: f.product_id.value });
+    const audience = () => pickAudience(all, subscribers, filter());
+    const recipients = () => audience().filter((r) => !excluded.has(r.phone_key));
+    const couponCode = () => S.coupons.find((c) => c.id === f.coupon_id.value)?.code || null;
+    const paintSummary = () => {
+      const list = recipients();
+      const off = audience().length - list.length;
+      $('#audCount', m).textContent = `${list.length} ${list.length === 1 ? 'pessoa vai' : 'pessoas vão'} receber${off ? ` (${off} desmarcada${off > 1 ? 's' : ''})` : ''} · ver lista`;
+      $('#cpPrev', m).innerHTML = waFormat(campaignText({ body: f.body.value, coupon_code: couponCode() }, list[0]?.name || 'Ana', siteBase()));
+      $('#cpEta', m).textContent = !list.length ? 'Ninguém nesse grupo.'
+        : IS_DEMO ? `${list.length} mensagens · no modo demonstração nada é enviado de verdade`
+        : `${list.length} mensagens · ${finishText(list.length, S.campaignCfg, { sentToday: sentToday() })}`;
+      $('#cpSend', m).disabled = !list.length;
+      $('#cpSend', m).innerHTML = `${icon('send')} Enviar para ${list.length}`;
+    };
+    const paintAudience = () => {
+      const fl = filter();
+      $('#fDays', m).hidden = fl.type !== 'sumidos';
+      $('#fProd', m).hidden = fl.type !== 'produto';
+      $('#audList', m).innerHTML = audience().map((r) => `<label><input type="checkbox" data-pk="${esc(r.phone_key)}" ${excluded.has(r.phone_key) ? '' : 'checked'} /> ${esc(r.name || 'Sem nome')} <small>${formatPhone(r.phone)}</small></label>`).join('');
+      paintSummary();
+    };
+    paintAudience();
+    f.type.onchange = f.days.onchange = f.product_id.onchange = () => { excluded.clear(); paintAudience(); };
+    f.body.oninput = paintSummary;
+    f.coupon_id.onchange = paintSummary;
+    $('#audList', m).addEventListener('change', (e) => {
+      const pk = e.target.dataset.pk;
+      if (!pk) return;
+      if (e.target.checked) excluded.delete(pk); else excluded.add(pk);
+      paintSummary();
+    });
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const list = recipients();
+      if (!list.length || !f.body.value.trim()) return;
+      if (!confirm(`Enviar "${f.name.value.trim()}" para ${list.length} pessoa(s)? O bot manda aos poucos, no ritmo configurado.`)) return;
+      $('#cpSend', m).disabled = true;
+      try {
+        await store.createCampaign({ name: f.name.value.trim(), body: f.body.value.trim(), coupon_id: f.coupon_id.value || null, audience: filter(), recipients: list });
+        close();
+        toast(IS_DEMO ? 'Campanha simulada (modo demonstração) ✨' : 'Campanha criada! O bot começa a enviar em instantes 📲');
+        if (S.view === 'campanhas') render(); else location.hash = 'campanhas';
+      } catch (ex) {
+        $('#cperr', m).textContent = ex.message;
+        $('#cpSend', m).disabled = false;
+      }
+    };
+  }, { wide: true });
+}
 
 /* =================================================================== */
 /* Bot WhatsApp                                                         */
@@ -903,6 +1080,7 @@ function botCtx() {
     listNews: () => store.listNews(),
     subscribe: (p, n, on) => store.subscribe(p, n, on),
     placeOrder: (o) => store.placeOrder({ ...o, notes: 'Teste pelo simulador do bot' }),
+    checkCoupon: (code, phone, items) => store.checkCoupon(code, phone, items),
     createNews: (n) => store.saveNews({ ...n, channels: ['site'], published: true }), // simulador não dispara WhatsApp
     broadcast: async () => ({ sent: 0 }),
     listOpenOrders: async () => (await store.listOrders()).filter((o) => OPEN_STATUSES.includes(o.status)),
@@ -910,6 +1088,9 @@ function botCtx() {
     findOrder: async (code) => S.orders.find((o) => o.code === code) || null,
   };
 }
+
+// O bot por QR Code grava o status a cada 30 s em settings.bot; 2 min sem sinal = desligado.
+const botAlive = (b) => !!b?.last_seen && Date.now() - new Date(b.last_seen).getTime() < 120e3 && b.state !== 'desligado';
 
 function viewBot(v, signal) {
   const live = !!CONFIG.BOT_FUNCTION_URL;
@@ -949,7 +1130,7 @@ function viewBot(v, signal) {
           <div class="phone-sim__head"><img src="assets/img/logo.png" width="34" height="34" alt="" /><div><b>Um Doce Até o Diploma</b><small>bot · online</small></div>
             <select id="persona" aria-label="Conversar como">${Object.entries(personas).map(([k, p]) => `<option value="${k}" ${SIM.persona === k ? 'selected' : ''}>${p.name}</option>`).join('')}</select></div>
           <div class="msgs" id="msgs"></div>
-          <div class="quick" id="quick">${['oi', '1', '2', '3', '0', 'quero 10 brigadeiros e 2 empadinhas', '#pedido 6 casadinhos', '#pedidos', '#producao', '#novidade Kit Provas | 4 docinhos + empadinha com preço especial!', 'cancelar'].map((q) => `<button type="button">${esc(q)}</button>`).join('')}</div>
+          <div class="quick" id="quick">${['oi', '1', '2', '3', '0', 'quero 10 brigadeiros e 2 empadinhas', '#pedido 6 casadinhos', '#pedidos', '#producao', '#novidade Kit Provas | 4 docinhos + empadinha com preço especial!', 'cupom VOLTA10', 'parar promoções', 'cancelar'].map((q) => `<button type="button">${esc(q)}</button>`).join('')}</div>
           <form class="composer" id="composer"><input id="msgIn" placeholder="Mensagem" autocomplete="off" /><button aria-label="Enviar">${icon('send')}</button></form>
         </div></div>
         <div style="text-align:center;margin-top:10px"><button class="btn btn--soft btn--sm" id="simReset">${icon('refresh')} Reiniciar conversa</button></div>
@@ -961,7 +1142,7 @@ function viewBot(v, signal) {
   if (botLive) {
     const line = (color, text) => `<p class="status-line"><span class="dot" style="background:var(--${color})"></span>${text}</p>`;
     const paint = (b) => {
-      const alive = b?.last_seen && Date.now() - new Date(b.last_seen).getTime() < 120e3 && b.state !== 'desligado';
+      const alive = botAlive(b);
       const qr = typeof b?.qr === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(b.qr) ? b.qr : '';
       if (alive && b.state === 'online') {
         botLive.innerHTML = line('leaf', `Bot online no WhatsApp${b.phone ? ` · ${esc(formatPhone(b.phone))}` : ''}`);

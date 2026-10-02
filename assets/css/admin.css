@@ -231,3 +231,18 @@ table.t { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width:
   .panel, .prod-item { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
 }
 .bot-qr { display: block; width: 240px; max-width: 100%; height: auto; margin: 12px auto 4px; padding: 10px; background: #fff; border-radius: 14px; image-rendering: pixelated; }
+.camp { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.camp:last-child { border-bottom: 0; }
+.camp__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.camp__head h3 { margin: 0; font-family: var(--f-display); font-size: 1.05rem; color: var(--choc); }
+.camp .hint, .camp__nums { margin: 0; }
+.camp__nums { font-size: 0.9rem; color: var(--ink-soft); }
+.camp__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.camp__list { margin: 8px 0 0; padding-left: 18px; max-height: 220px; overflow: auto; font-size: 0.88rem; }
+.camp__list small { color: var(--ink-soft); }
+.progress { height: 8px; border-radius: 99px; background: var(--sand); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--leaf); border-radius: inherit; transition: width 0.4s; }
+.aud summary { cursor: pointer; font-weight: 800; color: var(--choc); }
+.aud__list { display: grid; gap: 4px; max-height: 220px; overflow: auto; margin-top: 8px; font-size: 0.9rem; }
+.aud__list small { color: var(--ink-soft); }
+.preview-msg { max-width: none; }
