@@ -287,7 +287,7 @@ function orderCard(o) {
   const s = st(o.status);
   const fresh = !S.seen.has(o.id);
   return `<article class="ocard ${fresh ? 'fresh' : ''}" style="--st:${s.color}" draggable="true" data-id="${o.id}">
-    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span><span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
+    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
     <div class="ocard__who">${esc(o.customer_name)} <a href="${waLink('', o.phone)}" target="_blank" rel="noopener" style="font-weight:600;font-size:.82rem;color:var(--ink-soft)">${formatPhone(o.phone)}</a></div>
     <ul>${o.items.map((i) => `<li>${i.qty}× ${esc(i.name)}</li>`).join('')}</ul>
     ${o.notes ? `<div class="ocard__notes">📝 ${esc(o.notes)}</div>` : ''}
@@ -787,7 +787,100 @@ async function viewCustomers(v, signal) {
   $('#newCamp', v).onclick = () => campaignDialog();
 }
 
-function viewCoupons(v) { v.innerHTML = emptyState('Em breve', 'Cupons chegam na próxima etapa.'); }
+/* =================================================================== */
+/* Cupons                                                               */
+/* =================================================================== */
+const COUPON_STATE = { ativo: ['Ativo', 'var(--leaf)'], agendado: ['Agendado', 'var(--honey)'], expirado: ['Expirado', 'var(--muted)'], esgotado: ['Esgotado', 'var(--muted)'], pausado: ['Pausado', 'var(--muted)'] };
+const siteBase = () => `${location.origin}${location.pathname.replace(/admin\.html$/, '')}`;
+const couponUses = (code) => S.orders.filter((o) => o.coupon_code === code && o.status !== 'cancelado');
+const fmtDay = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '');
+function validity(c) {
+  if (c.starts_on && c.ends_on) return `${fmtDay(c.starts_on)} a ${fmtDay(c.ends_on)}`;
+  if (c.ends_on) return `até ${fmtDay(c.ends_on)}`;
+  if (c.starts_on) return `a partir de ${fmtDay(c.starts_on)}`;
+  return 'sem prazo';
+}
+
+function viewCoupons(v, signal) {
+  v.innerHTML = `
+    <div class="toolbar"><p class="hint" style="margin:0;flex:1">O cupom vale no site e no bot. Cada WhatsApp usa uma vez; pedido cancelado devolve o uso.</p>
+      <button class="btn" id="addC">${icon('plus')} Novo cupom</button></div>
+    <section class="panel"><div class="table-wrap"><table class="t">
+      <thead><tr><th>Código</th><th>Desconto</th><th>Vigência</th><th class="num">Usos</th><th class="num">Vendas</th><th class="num">Desconto dado</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${S.coupons.map((c) => {
+        const used = couponUses(c.code);
+        const [label, color] = COUPON_STATE[couponState(c, used.length)];
+        return `<tr><td><b>${esc(c.code)}</b></td>
+          <td>${couponLabel(c)}${Number(c.min_order) ? `<br><small class="hint">pedido mín. ${money(c.min_order)}</small>` : ''}</td>
+          <td>${validity(c)}</td>
+          <td class="num">${used.length}${c.max_uses ? ` de ${c.max_uses}` : ''}</td>
+          <td class="num">${money(used.reduce((s, o) => s + Number(o.total), 0))}</td>
+          <td class="num">${money(used.reduce((s, o) => s + Number(o.discount || 0), 0))}</td>
+          <td><span class="status-line"><span class="dot" style="background:${color}"></span>${label}</span></td>
+          <td style="white-space:nowrap">
+            <button class="icon-btn" data-copy="${esc(c.code)}" title="Copiar link com o cupom" aria-label="Copiar link com o cupom">${icon('copy')}</button>
+            <button class="icon-btn" data-editc="${c.id}" title="Editar" aria-label="Editar">${icon('edit')}</button>
+            <label class="switch" title="${c.active ? 'Pausar' : 'Ativar'}"><input type="checkbox" data-activec="${c.id}" ${c.active ? 'checked' : ''}/><i></i></label>
+          </td></tr>`;
+      }).join('') || '<tr><td colspan="8" class="empty">Nenhum cupom ainda. Crie o primeiro!</td></tr>'}</tbody>
+    </table></div></section>`;
+  $('#addC', v).onclick = () => couponDialog();
+  on(v, signal, 'click', '[data-editc]', (b) => couponDialog(S.coupons.find((c) => c.id === b.dataset.editc)));
+  on(v, signal, 'change', '[data-activec]', async (i) => {
+    try { await store.saveCoupon({ id: i.dataset.activec, active: i.checked }); } catch (e) { toast(e.message, 'err'); }
+    S.coupons = await store.listCoupons();
+    render();
+  });
+  on(v, signal, 'click', '[data-copy]', async (b) => {
+    try { await navigator.clipboard.writeText(`${siteBase()}?cupom=${b.dataset.copy}`); toast('Link copiado 🎟️'); } catch { toast('Não consegui copiar', 'err'); }
+  });
+}
+
+function couponDialog(c = { code: '', kind: 'percent', value: '', min_order: 0, starts_on: null, ends_on: null, max_uses: null, active: true }) {
+  const locked = !!c.id && couponUses(c.code).length > 0; // já usado: o código não muda
+  openDialog(`<h2>${c.id ? 'Editar cupom' : 'Novo cupom'}</h2>
+    <form class="form" id="cf">
+      <div class="row">
+        <label class="field"><span>Código</span><input class="input" name="code" required maxlength="20" value="${esc(c.code)}" placeholder="VOLTA10" style="text-transform:uppercase" ${locked ? 'readonly title="Já foi usado: o código não muda"' : ''} /></label>
+        <label class="field"><span>Desconto</span><span style="display:flex;gap:6px">
+          <select class="select" name="kind" style="width:auto"><option value="percent" ${c.kind === 'percent' ? 'selected' : ''}>%</option><option value="fixed" ${c.kind === 'fixed' ? 'selected' : ''}>R$</option></select>
+          <input class="input" name="value" type="number" step="0.01" min="0.01" required value="${c.value}" /></span></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>Válido de</span><input class="input" name="starts_on" type="date" value="${c.starts_on || ''}" /></label>
+        <label class="field"><span>Até (inclusive)</span><input class="input" name="ends_on" type="date" value="${c.ends_on || ''}" /></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>Cota (total de usos)</span><input class="input" name="max_uses" type="number" min="1" step="1" value="${c.max_uses ?? ''}" placeholder="Sem limite" /></label>
+        <label class="field"><span>Pedido mínimo (R$)</span><input class="input" name="min_order" type="number" min="0" step="0.01" value="${Number(c.min_order) || ''}" placeholder="Sem mínimo" /></label>
+      </div>
+      <label class="switch"><input type="checkbox" name="active" ${c.active ? 'checked' : ''}/><i></i>Ativo</label>
+      <p class="hint">Prefira código com número (ex.: VOLTA10): no WhatsApp o cliente pode digitar em minúsculas. Cada WhatsApp usa uma vez, e a cota conta só pedidos não cancelados.</p>
+      <p class="err" id="cerr"></p>
+      <div class="form__actions"><button class="btn" type="submit">Salvar cupom</button></div>
+    </form>`, (m, close) => {
+    const f = $('#cf', m);
+    const fail = (t) => { $('#cerr', m).textContent = t; };
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const rec = {
+        code: normCode(f.code.value), kind: f.kind.value, value: Number(f.value.value), min_order: Number(f.min_order.value) || 0,
+        starts_on: f.starts_on.value || null, ends_on: f.ends_on.value || null, max_uses: f.max_uses.value ? Number(f.max_uses.value) : null, active: f.active.checked,
+      };
+      if (!/^[A-Z0-9]{3,20}$/.test(rec.code)) return fail('Use de 3 a 20 letras e números, sem espaço nem acento.');
+      if (!(rec.value > 0)) return fail('Informe o valor do desconto.');
+      if (rec.kind === 'percent' && rec.value > 100) return fail('Desconto em porcentagem vai até 100.');
+      if (rec.starts_on && rec.ends_on && rec.ends_on < rec.starts_on) return fail('A data final vem antes da inicial.');
+      try {
+        await store.saveCoupon(c.id ? { id: c.id, ...rec } : rec);
+        S.coupons = await store.listCoupons();
+        close();
+        render();
+        toast('Cupom salvo 🎟️');
+      } catch (ex) { fail(ex.message); }
+    };
+  });
+}
 function viewCampaigns(v) { v.innerHTML = emptyState('Em breve', 'Campanhas chegam na próxima etapa.'); }
 function campaignDialog() { location.hash = 'campanhas'; }
 
