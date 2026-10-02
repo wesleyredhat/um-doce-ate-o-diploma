@@ -59,8 +59,12 @@ Bot:     menu → 1 Fazer encomenda · 2 Cardápio · 3 Novidades · 4 Receber n
 Cliente: 1 → número do produto → quantidade → (mais itens | 0 finalizar) → nome (ou 1 = nome do perfil)
 Bot:     resumo + total → 1 Confirmar · 2 Adicionar · 3 Cancelar
 Cliente: 1
-Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · Pix: …
+Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · vou conferir a agenda e confirmo com a chave Pix
+Painel:  Confirmar → Bot: pedido confirmado, itens e total + (2ª mensagem) só a chave Pix, peça o comprovante
+Painel:  Pronto    → Bot: prontinho e disponível para entrega, vamos combinar horário e local
 ```
+
+- **Avisos do pedido**: um gatilho do banco (`orders_notice`) cria a fila em `order_notices` quando o pedido sai de Novo (Pix) e quando chega em Pronto; o bot do Mac envia em até 10 s (`bot/notices.js`). Uma vez por pedido e tipo; pedido cancelado, "pronto" já entregue ou aviso com mais de 1 dia (bot desligado) é pulado.
 
 - **Atalho em linguagem natural**: “quero 10 brigadeiros e 2 empadinhas”, “uma dúzia de casadinhos” → o bot monta o carrinho e pula direto para o nome.
 - **Comandos globais**: `menu`, `oi`, `cancelar`.
@@ -113,6 +117,7 @@ coupons     (id, code, kind[percent|fixed], value, min_order, starts_on, ends_on
 optouts     (phone_key, phone, created_at)              quem pediu para não receber campanhas nem novidades
 campaigns   (id, name, body, coupon_id, audience jsonb, status[enviando|pausada|concluida|cancelada], pause_reason, created_at, finished_at)
 campaign_sends (id, campaign_id, phone, phone_key, name, status[pendente|enviando|enviada|falhou|pulada], error, claimed_at, sent_at)
+order_notices (id, order_id, kind[confirmado|pronto], status[pendente|enviando|enviada|falhou|pulada], error, created_at, sent_at)   ← um por pedido e tipo
              orders também guarda coupon_code e discount (total = subtotal − desconto)
 view admin_customers  quem comprou, agrupado por phone_key (só admin)
 ```

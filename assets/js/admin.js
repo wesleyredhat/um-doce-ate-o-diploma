@@ -336,7 +336,7 @@ function notifyLink(o) {
   const pix = S.settings.pix_key ? `\n💸 Pix: ${S.settings.pix_key}` : '';
   const stamps = S.orders.filter((x) => x.phone === o.phone && x.status === 'entregue').length + (o.status === 'entregue' ? 0 : 1);
   const msg = {
-    novo: `Oi, ${first}! Recebemos seu pedido *${o.code}* 🎓\n${items}\nTotal: *${money(o.total)}*${pix}\n\nPosso confirmar?`,
+    novo: `Oi, ${first}! Recebemos seu pedido *${o.code}* 🎓\n${items}\nTotal: *${money(o.total)}*\n\nPosso confirmar?`,
     confirmado: `Oi, ${first}! Pedido *${o.code}* confirmado ✅\n${items}\nTotal: *${money(o.total)}*${pix}`,
     producao: `Oi, ${first}! Seu pedido *${o.code}* já está no forno 👩‍🍳💛`,
     pronto: `Oi, ${first}! Seu pedido *${o.code}* está prontinho 🎓🍫 Vamos combinar a entrega?`,
@@ -356,13 +356,23 @@ async function setStatus(id, status) {
     S.seen.add(id);
     updateNewPill();
     render();
-    if (status === 'pronto' || status === 'confirmado') {
-      toast(`${o.code} → ${st(status).label}. Avise no WhatsApp 💬`);
-    }
+    // Mesmas regras do gatilho orders_notice (supabase/schema.sql): saiu de "novo" = Pix; chegou em "pronto" = aviso.
+    const pix = prev === 'novo' && ['confirmado', 'producao', 'pronto'].includes(status);
+    const ready = status === 'pronto';
+    if (pix || ready) noticeToast(o, pix && ready ? 'o Pix e o aviso de pronto' : pix ? 'o Pix' : 'o aviso de pronto');
   } catch (e) {
     o.status = prev;
     toast(e.message, 'err');
   }
+}
+
+// O banco cria o aviso e o bot do Mac envia (bot/notices.js); no modo demonstração não tem bot.
+async function noticeToast(o, what) {
+  const head = `${o.code} → ${st(o.status).label}.`;
+  if (IS_DEMO) return toast(`${head} Avise no WhatsApp 💬`);
+  const b = await store.botStatus().catch(() => null);
+  if (botAlive(b) && b.state === 'online') toast(`${head} O bot manda ${what} para ${o.customer_name.split(' ')[0]} 📲`);
+  else toast(`${head} Bot desconectado: ${what} sai quando ele voltar (até 1 dia). Se for urgente, use o botão do WhatsApp.`, 'err');
 }
 
 function wireOrderActions(root, signal) {

@@ -17,6 +17,7 @@ import pino from 'pino';
 import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engine.js';
 import { createCore, PAUSE_TTL_MS } from './core.js';
 import { createSender } from './sender.js';
+import { createNotices } from './notices.js';
 import { createSubscriptions } from './subscriptions.js';
 import { phoneKey } from '../assets/js/coupons.js';
 
@@ -33,6 +34,7 @@ const OWNER_PHONE = env('OWNER_PHONE').replace(/\D/g, '');
 const PAIRING_PHONE = env('PAIRING_PHONE').replace(/\D/g, '');
 const AUTH_DIR = fileURLToPath(new URL('./auth', import.meta.url));
 const TICK_MS = 30_000;
+const NOTICE_TICK_MS = 10_000; // Pix e "pronto" saem até 10 s depois da mudança na esteira
 const CAMPAIGN_TICK_MS = 5_000; // o ritmo de verdade (20 a 60 s entre mensagens) fica em sender.js
 const LOCK = fileURLToPath(new URL('./bot.pid', import.meta.url));
 const RECENT_MS = 2 * 60e3; // mensagem de cliente que chegou durante uma reconexão curta ainda é respondida
@@ -133,7 +135,7 @@ const ctx = {
     if (error) throw new Error(error.message);
     return data;
   },
-  findOrder: async (code) => (await db.from('orders').select('code, phone, total, items').eq('code', code).maybeSingle()).data,
+  findOrder: async (code) => (await db.from('orders').select('code, phone, total, items, status').eq('code', code).maybeSingle()).data,
   // #novidade pelo WhatsApp: só grava; o envio fica com sendPendingNews para não travar as conversas.
   createNews: async (n) => {
     const { data, error } = await db.from('news').insert({ ...n, published: true }).select().single();
@@ -199,24 +201,46 @@ const campaignDb = {
 };
 let campaignTick = Promise.resolve(); // envio de campanha em andamento (o desligamento espera por ele)
 let campaignBusy = false;
+// O WhatsApp devolve o endereço certo (com ou sem o 9); null = número sem WhatsApp.
+async function lookupJid(phone) {
+  try {
+    const [r] = (await sock.onWhatsApp(toJid(phone))) || [];
+    return r?.exists ? r.jid : null;
+  } catch {
+    return toJid(phone);
+  }
+}
 const sender = createSender({
   db: campaignDb,
   siteUrl: SITE_URL,
   log,
-  wa: {
-    online: () => online,
-    // O WhatsApp devolve o endereço certo (com ou sem o 9); null = número sem WhatsApp.
-    lookup: async (phone) => {
-      try {
-        const [r] = (await sock.onWhatsApp(toJid(phone))) || [];
-        return r?.exists ? r.jid : null;
-      } catch {
-        return toJid(phone);
-      }
-    },
-    send: (jid, text) => sendText(jid, text),
-  },
+  wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
 });
+
+// Avisos do pedido (Pix na confirmação, "pronto para entrega"): o banco cria a fila em order_notices
+// quando o status muda na esteira do painel. Regras em notices.js.
+const notices = createNotices({
+  db: {
+    settings: () => ctx.getSettings(),
+    pending: async () => must(await db.from('order_notices')
+      .select('id, kind, created_at, order:orders(id, code, customer_name, phone, items, total, discount, status)')
+      .eq('status', 'pendente').order('id').limit(50)),
+    claim: async (id) => !!must(await db.from('order_notices').update({ status: 'enviando' }).eq('id', id).eq('status', 'pendente').select('id')).length,
+    mark: async (id, patch) => must(await db.from('order_notices').update(patch).eq('id', id)),
+  },
+  wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
+  log,
+});
+let noticeTick = Promise.resolve(); // o desligamento espera o aviso em andamento
+let noticeWarnAt = 0;
+function sendNotices() {
+  if (stopping) return;
+  noticeTick = notices.tick().catch((e) => {
+    if (Date.now() - noticeWarnAt < 10 * 60e3) return;
+    noticeWarnAt = Date.now();
+    console.error(/schema cache|does not exist/.test(e.message) ? `⚠️  Para mandar o Pix e o aviso de pronto, rode o supabase/schema.sql no SQL Editor do Supabase (${e.message})` : `erro nos avisos de pedido: ${e.message}`);
+  });
+}
 
 // Novidades publicadas com o canal WhatsApp (no painel ou por #novidade) ficam pendentes até o bot enviar.
 const NEWS_SQL = 'alter table public.news add column if not exists wa_sent_at timestamptz;';
@@ -412,8 +436,8 @@ if ((await db.from('news').select('wa_sent_at').limit(1)).error?.code === '42703
 }
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
-    stopping = true; // não começa mensagem nem envio de campanha novos; termina o que está em andamento (pedido ou campanha)
-    await Promise.race([Promise.all([queue, campaignTick]), sleep(10e3)]);
+    stopping = true; // não começa mensagem nem envio de campanha novos; termina o que está em andamento (pedido, campanha ou aviso)
+    await Promise.race([Promise.all([queue, campaignTick, noticeTick]), sleep(10e3)]);
     await setStatus({ state: 'desligado', qr: null }).catch(() => {});
     process.exit(0);
   });
@@ -422,6 +446,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 await setStatus({ state: 'iniciando', qr: null, pairing: null });
 await start();
 setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);
+setInterval(sendNotices, NOTICE_TICK_MS);
 // Erro no envio (banco sem as tabelas novas, Supabase fora do ar): tenta de novo em 1 min e avisa no log a cada 10 min.
 let campaignRetryAt = 0;
 let campaignWarnAt = 0;

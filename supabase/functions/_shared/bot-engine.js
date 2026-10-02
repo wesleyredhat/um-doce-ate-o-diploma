@@ -208,6 +208,9 @@ Como posso adoçar seu dia?
 _Dica: pode mandar direto, tipo "quero 10 brigadeiros e 2 empadinhas"._`;
 }
 
+// O Pix vai só na confirmação (bot/notices.js): ninguém paga por um pedido que ainda pode não ser aceito.
+const AFTER_ORDER = '\n\nVou conferir a agenda e confirmo por aqui, já com a chave Pix para o pagamento.';
+
 function catalogText(products) {
   const groups = {};
   // "5 - Empadinha": sem o traço, o número da opção parece a quantidade ("5 empadinhas").
@@ -349,8 +352,11 @@ export async function handleMessage(msg, ctx) {
     await save(null);
     const o = await ctx.findOrder?.(code);
     if (!o || !samePhone(o.phone, phone)) return [`Recebi sua mensagem sobre o pedido *${code}* 💛 Já vamos conferir e te respondemos por aqui!`];
-    const pix = settings.pix_key ? `\n\n💸 Pix: *${settings.pix_key}*` : '';
-    return [`🎓 Pedido *${o.code}* recebido! ✅\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}\nTotal: *${brl(o.total)}*${pix}\n\nTe aviso por aqui quando estiver pronto 💛`];
+    // Já confirmado: o aviso com o Pix saiu (bot/notices.js), então repete a chave para quem pergunta.
+    const next = o.status && o.status !== 'novo'
+      ? (settings.pix_key ? `\n\nJá está confirmado ✅ Pix: *${settings.pix_key}*` : '\n\nJá está confirmado ✅')
+      : AFTER_ORDER;
+    return [`🎓 Pedido *${o.code}* recebido! ✅\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}\nTotal: *${brl(o.total)}*${next}\n\nTe aviso por aqui quando estiver pronto 💛`];
   }
   if (s.state === 'human') return []; // atendimento humano em andamento
 
@@ -501,9 +507,8 @@ export async function handleMessage(msg, ctx) {
           return [`🎟️ ${e.message}, então tirei o cupom.\n\n${await summary(next, ctx, phone)}${CONFIRM_OPTIONS}`];
         }
         await save(null);
-        const pix = settings.pix_key ? `\n\n💸 Pix: *${settings.pix_key}*` : '';
         const off = Number(r.discount) > 0 ? ` (já com ${brl(r.discount)} de desconto)` : '';
-        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${off}${pix}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
+        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${off}${AFTER_ORDER}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
       }
       if (t === '2') {
         await save({ ...s, state: 'more' });

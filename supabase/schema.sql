@@ -136,6 +136,20 @@ create table if not exists public.campaign_sends (
 create index if not exists campaign_sends_queue_idx on public.campaign_sends (campaign_id, status);
 create index if not exists campaign_sends_sent_idx on public.campaign_sends (sent_at) where status = 'enviada';
 
+-- Avisos automáticos do pedido pelo WhatsApp (bot/notices.js): Pix na confirmação e "pronto para entrega".
+-- O gatilho orders_notice cria a linha quando o status muda; uma por pedido e tipo, então não repete.
+create table if not exists public.order_notices (
+  id bigint generated always as identity primary key,
+  order_id uuid not null references public.orders (id) on delete cascade,
+  kind text not null check (kind in ('confirmado', 'pronto')),
+  status text not null default 'pendente' check (status in ('pendente', 'enviando', 'enviada', 'falhou', 'pulada')),
+  error text,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz,
+  unique (order_id, kind)
+);
+create index if not exists order_notices_pending_idx on public.order_notices (id) where status = 'pendente';
+
 -- ------------------------------------------------------------------
 -- Funções
 -- ------------------------------------------------------------------
@@ -271,6 +285,22 @@ end $$;
 drop trigger if exists orders_coupon_reopen on public.orders;
 create trigger orders_coupon_reopen before update of status on public.orders for each row execute function public.orders_coupon_reopen();
 
+-- Saiu de "novo" para a esteira (confirmado, ou arrastado direto para produção ou pronto): aviso com o Pix.
+-- Chegou em "pronto": aviso de disponível para entrega. Reabrir e confirmar de novo não repete (unique).
+create or replace function public.orders_notice() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if old.status = 'novo' and new.status in ('confirmado', 'producao', 'pronto') then
+    insert into order_notices (order_id, kind) values (new.id, 'confirmado') on conflict do nothing;
+  end if;
+  if new.status = 'pronto' and old.status is distinct from 'pronto' then
+    insert into order_notices (order_id, kind) values (new.id, 'pronto') on conflict do nothing;
+  end if;
+  return new;
+end $$;
+drop trigger if exists orders_notice on public.orders;
+create trigger orders_notice after update of status on public.orders for each row execute function public.orders_notice();
+
 -- Prévia do cupom para o site e o bot: as mesmas regras de place_order, sem gravar nada.
 create or replace function public.check_coupon(p_code text, p_phone text default '', p_items jsonb default '[]')
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -356,6 +386,7 @@ alter table public.coupons enable row level security;
 alter table public.optouts enable row level security;
 alter table public.campaigns enable row level security;
 alter table public.campaign_sends enable row level security;
+alter table public.order_notices enable row level security;
 
 drop policy if exists "admins read self" on public.admins;
 create policy "admins read self" on public.admins for select using (user_id = auth.uid());
@@ -394,6 +425,8 @@ drop policy if exists "campaigns admin" on public.campaigns;
 create policy "campaigns admin" on public.campaigns for all using (public.is_admin()) with check (public.is_admin());
 drop policy if exists "campaign_sends admin" on public.campaign_sends;
 create policy "campaign_sends admin" on public.campaign_sends for all using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "order_notices admin" on public.order_notices;
+create policy "order_notices admin" on public.order_notices for all using (public.is_admin()) with check (public.is_admin());
 
 -- ------------------------------------------------------------------
 -- Dados iniciais

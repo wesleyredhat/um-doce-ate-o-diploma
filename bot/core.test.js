@@ -23,7 +23,7 @@ const COUPONS = {
 };
 const subtotalOf = (items) => items.reduce((s, i) => s + i.qty * PRODUCTS.find((p) => p.id === i.product_id).price, 0);
 
-function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [] } = {}) {
+function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [], orderStatus = 'novo' } = {}) {
   let clock = Date.parse('2026-10-02T12:00:00Z');
   const rows = new Map();
   const orders = [];
@@ -66,7 +66,7 @@ function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [
       orders.push(o);
       return { code: 'DD-TEST', total: subtotal - discount, discount };
     },
-    findOrder: async (code) => (code === 'DD-K7P2' ? { code, phone: ANA, total: 40, items: [{ qty: 10, name: 'Brigadeiro' }] } : null),
+    findOrder: async (code) => (code === 'DD-K7P2' ? { code, phone: ANA, total: 40, items: [{ qty: 10, name: 'Brigadeiro' }], status: orderStatus } : null),
     createNews: async (n) => { news.push(n); return { id: 'n1', ...n }; },
     broadcast: async () => ({ queued: true }),
     listOpenOrders: async () => [],
@@ -154,7 +154,9 @@ test('"menu" abre o atendimento e o pedido completo chega na plataforma', async 
   assert.match((await say('10'))[0], /Anotado: 10x Brigadeiro/);
   assert.match((await say('0'))[0], /Para quem é o pedido/);
   assert.match((await say('Ana Souza'))[0], /\*Total: R\$ 40,00\*/);
-  assert.match((await say('1'))[0], /Pedido \*DD-TEST\* recebido/);
+  const done = (await say('1'))[0];
+  assert.match(done, /Pedido \*DD-TEST\* recebido/);
+  assert.doesNotMatch(done, /pix@doce\.com/, 'o Pix vai na confirmação');
   assert.deepEqual(orders, [{ customer_name: 'Ana Souza', phone: ANA, channel: 'whatsapp', items: [{ product_id: 'p1', qty: 10 }] }]);
   assert.equal(rows.size, 0, 'conversa encerrada depois do pedido');
   assert.deepEqual(await say('obrigada!'), [], 'agradecimento depois do pedido não reabre o menu');
@@ -200,7 +202,11 @@ test('mensagem do site com código não duplica o pedido', async () => {
   const msg = 'Oi! Acabei de fazer o pedido *DD-K7P2* pelo site 🎓\n\n• 10x Brigadeiro\n\nTotal: *R$ 40,00*\nNome: Ana';
   const [r] = await say(msg);
   assert.match(r, /Pedido \*DD-K7P2\* recebido/);
-  assert.match(r, /Pix/);
+  // o Pix vai na confirmação (bot/notices.js), não aqui
+  assert.match(r, /confirmo por aqui, já com a chave Pix/);
+  assert.doesNotMatch(r, /pix@doce\.com/);
+  // já confirmado: repete a chave para quem pergunta
+  assert.match((await setup({ orderStatus: 'confirmado' }).say(msg))[0], /Já está confirmado ✅ Pix: \*pix@doce\.com\*/);
   assert.doesNotMatch(r, /Para quem é o pedido/);
   assert.equal(orders.length, 0);
   // celular antigo sem o 9 no WhatsApp: ainda reconhece que o pedido é da mesma pessoa
