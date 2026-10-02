@@ -29,6 +29,8 @@ for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) {
 const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SECRET_KEY'), { auth: { persistSession: false } });
 const SITE_URL = env('SITE_URL');
 const OWNER_PHONE = env('OWNER_PHONE').replace(/\D/g, '');
+// Número da loja: com ele, o bot conecta por código de 8 letras em vez do QR Code (quando a câmera não lê o QR).
+const PAIRING_PHONE = env('PAIRING_PHONE').replace(/\D/g, '');
 const AUTH_DIR = fileURLToPath(new URL('./auth', import.meta.url));
 const TICK_MS = 30_000;
 const CAMPAIGN_TICK_MS = 5_000; // o ritmo de verdade (20 a 60 s entre mensagens) fica em sender.js
@@ -303,8 +305,28 @@ async function onMessage(m, type) {
   for (const r of replies) await sendText(replyTo, r);
 }
 
+// Conectar com código: WhatsApp → Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone.
+// Um código por conexão; se a tentativa expirar, o bot reconecta e mostra um código novo.
+let pairingFor = null;
+async function requestPairing() {
+  if (pairingFor === sock) return;
+  pairingFor = sock;
+  try {
+    const code = await sock.requestPairingCode(PAIRING_PHONE);
+    const shown = `${code.slice(0, 4)}-${code.slice(4)}`;
+    log(`Código para conectar o WhatsApp: ${shown} (no celular: Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone)`);
+    setStatus({ state: 'pairing', qr: null, pairing: shown });
+  } catch (e) {
+    pairingFor = null;
+    console.error('erro ao pedir o código de conexão', e.message);
+  }
+}
+
 function onConnection({ connection, lastDisconnect, qr }) {
-  if (qr) {
+  if (qr && PAIRING_PHONE) {
+    attempt = 0;
+    requestPairing();
+  } else if (qr) {
     attempt = 0;
     if (process.stdout.isTTY) {
       console.log('\nNo celular da loja: WhatsApp → Aparelhos conectados → Conectar um aparelho → escaneie (também aparece no painel):\n');
@@ -312,7 +334,8 @@ function onConnection({ connection, lastDisconnect, qr }) {
     } else if (status.state !== 'qr') {
       log('Aguardando conexão: o QR Code está no painel (aba Bot WhatsApp).'); // serviço: não desenha o QR no bot.log
     }
-    QRCode.toDataURL(qr, { margin: 1, width: 320 })
+    // Correção de erro L (menos módulos, então maiores), margem de 4 módulos e 6 px por módulo: lê melhor na tela.
+    QRCode.toDataURL(qr, { errorCorrectionLevel: 'L', margin: 4, scale: 6 })
       .then((url) => setStatus({ state: 'qr', qr: url }))
       .catch((e) => console.error('erro ao gerar QR Code', e.message));
   }
@@ -321,7 +344,7 @@ function onConnection({ connection, lastDisconnect, qr }) {
     attempt = 0;
     const phone = digits(sock.user?.id);
     log(`✅ Conectado ao WhatsApp (+${phone}). Bot no ar.`);
-    setStatus({ state: 'online', qr: null, phone });
+    setStatus({ state: 'online', qr: null, pairing: null, phone });
   }
   if (connection === 'close') {
     online = false;
@@ -331,7 +354,7 @@ function onConnection({ connection, lastDisconnect, qr }) {
       // O aparelho foi removido no celular: a sessão não vale mais, então gera um QR Code novo.
       log('❌ WhatsApp desconectado pelo celular. Gerando um QR Code novo (painel → Bot WhatsApp).');
       rmSync(AUTH_DIR, { recursive: true, force: true });
-      setStatus({ state: 'desconectado', qr: null, phone: null });
+      setStatus({ state: 'desconectado', qr: null, pairing: null, phone: null });
     } else if (code === DisconnectReason.connectionReplaced) {
       wait = 120e3;
       log('Outra cópia do bot conectou com este WhatsApp; tento de novo em 2 min.');
@@ -388,7 +411,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-await setStatus({ state: 'iniciando', qr: null });
+await setStatus({ state: 'iniciando', qr: null, pairing: null });
 await start();
 setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);
 // Erro no envio (banco sem as tabelas novas, Supabase fora do ar): tenta de novo em 1 min e avisa no log a cada 10 min.

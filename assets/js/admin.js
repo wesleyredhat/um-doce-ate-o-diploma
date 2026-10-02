@@ -1166,15 +1166,26 @@ function viewBot(v, signal) {
   const botLive = $('#botLive', v);
   if (botLive) {
     const line = (color, text) => `<p class="status-line"><span class="dot" style="background:var(--${color})"></span>${text}</p>`;
+    let shown = '';
     const paint = (b) => {
       const alive = botAlive(b);
       const qr = typeof b?.qr === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(b.qr) ? b.qr : '';
+      const pairing = typeof b?.pairing === 'string' && /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(b.pairing) ? b.pairing : '';
+      // Só redesenha quando algo muda: o QR não pisca enquanto a câmera tenta ler.
+      const key = [alive, b?.state, qr, pairing, b?.phone, alive ? '' : b?.last_seen && timeAgo(b.last_seen)].join('|');
+      if (key === shown) return;
+      shown = key;
       if (alive && b.state === 'online') {
         botLive.innerHTML = line('leaf', `Bot online no WhatsApp${b.phone ? ` · ${esc(formatPhone(b.phone))}` : ''}`);
+      } else if (alive && b.state === 'pairing' && pairing) {
+        botLive.innerHTML = line('honey', 'Aguardando conexão com o WhatsApp')
+          + `<p class="bot-code">${pairing}</p>
+          <p class="hint">No celular da loja: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → <b>Conectar com número de telefone</b> → digite o código. Se ele expirar, aparece um novo aqui.</p>`;
       } else if (alive && b.state === 'qr' && qr) {
         botLive.innerHTML = line('honey', 'Aguardando conexão com o WhatsApp')
-          + `<img class="bot-qr" src="${qr}" alt="QR Code para conectar o WhatsApp" width="240" height="240" />
-          <p class="hint">No celular da loja: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → aponte para o código. Ele se renova sozinho.</p>`;
+          + `<img class="bot-qr" src="${qr}" alt="QR Code para conectar o WhatsApp" />
+          <p class="hint">Leia pelo próprio WhatsApp (a câmera comum do celular não conecta): no celular da loja, WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → aponte para o código. Ele se renova sozinho a cada 20 segundos.</p>
+          <p class="hint">Não leu? Aumente o brilho da tela e aproxime o celular. Ou conecte por código: preencha <code>PAIRING_PHONE</code> no <code>bot/.env</code> com o número da loja e reinicie o bot.</p>`;
       } else if (alive) {
         botLive.innerHTML = line('honey', 'Bot ligado, conectando ao WhatsApp…');
       } else {

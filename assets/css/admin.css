@@ -233,7 +233,9 @@ table.t { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width:
   .main { padding: 0; }
   .panel, .prod-item { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
 }
-.bot-qr { display: block; width: 240px; max-width: 100%; height: auto; margin: 12px auto 4px; padding: 10px; background: #fff; border-radius: 14px; image-rendering: pixelated; }
+/* Tamanho natural (6 px por módulo): reduzir o QR com pixelated deixa os módulos desiguais e a câmera não lê. */
+.bot-qr { display: block; width: auto; max-width: 100%; height: auto; margin: 12px auto 4px; padding: 10px; background: #fff; border-radius: 14px; image-rendering: pixelated; }
+.bot-code { margin: 14px 0 6px; text-align: center; font-family: var(--f-display); font-size: 2.2rem; font-weight: 600; letter-spacing: 0.12em; color: var(--choc); }
 .camp { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
 .camp:last-child { border-bottom: 0; }
 .camp__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }

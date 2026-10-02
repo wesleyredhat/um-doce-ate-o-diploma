@@ -68,6 +68,8 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 3. Abra `bot/.env` e cole em `SUPABASE_SECRET_KEY` a **Secret key** (Supabase → Project Settings → API Keys). Essa chave dá acesso total ao banco: fica só nesse arquivo, que não vai para o GitHub.
 4. `./instalar-servico-mac.sh` → o bot passa a rodar em segundo plano, liga sozinho com o Mac e reinicia se cair (log em `bot/bot.log`; para desinstalar, `./instalar-servico-mac.sh remover`). Para testar no terminal sem instalar: `npm start`.
 5. Conecte o WhatsApp: o QR Code aparece no painel, aba **Bot WhatsApp** (e também no terminal/log). No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie. A mesma aba mostra depois se o bot está online.
+   - O QR precisa ser lido pelo próprio WhatsApp (a câmera comum do celular não conecta). Se não ler, aumente o brilho da tela e aproxime o celular.
+   - Alternativa sem QR: preencha `PAIRING_PHONE` no `bot/.env` com o número da loja (55 + DDD + número) e reinicie o bot. O painel mostra um código de 8 letras para digitar em **Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone**.
 
 **Quando o bot responde** (o número da loja também é de uso pessoal; regras em `bot/core.js`, testes em `bot/core.test.js`, `npm test`):
 
