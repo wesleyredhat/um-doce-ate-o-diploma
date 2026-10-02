@@ -175,8 +175,9 @@ function openDialog(html, mount, { wide = false } = {}) {
   const body = $('#dlgBody');
   body.className = `modal ${wide ? 'modal--wide' : ''}`;
   body.innerHTML = `<button class="icon-btn modal__x" data-close aria-label="Fechar">${icon('x')}</button>${html}`;
-  body.onclick = (e) => e.target.closest('[data-close]') && dlg.close();
-  dlg.onclick = (e) => e.target === dlg && dlg.close();
+  // Sem "return false": um onclick que devolve false cancela o clique (salvar, marcar, links dentro da janela).
+  body.onclick = (e) => { if (e.target.closest('[data-close]')) dlg.close(); };
+  dlg.onclick = (e) => { if (e.target === dlg) dlg.close(); };
   dlg.showModal();
   mount?.(body, () => dlg.close());
 }
