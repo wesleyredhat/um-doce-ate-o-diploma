@@ -39,6 +39,15 @@ test('filtros de público (quem saiu nunca entra)', () => {
   assert.deepEqual(pickAudience(CUSTOMERS, [], { type: 'todos' }, NOW)[0], { phone: ANA.phone, name: 'Ana Clara', phone_key: ANA.phone_key });
 });
 
+test('limites dos filtros: 3 pedidos entra em "3 pedidos ou mais"; os que mais gastaram param em 20', () => {
+  const tres = cust('5511988880009', 'Duda', 3, 50, '2026-09-01T12:00:00Z', []);
+  assert.deepEqual(names(pickAudience([...CUSTOMERS, tres], [], { type: 'fieis' }, NOW)), ['Ana Clara', 'Duda']);
+  const many = Array.from({ length: 25 }, (_, i) => cust(`55119888810${String(i).padStart(2, '0')}`, `C${i}`, 1, i * 10, '2026-09-01T12:00:00Z', []));
+  const top = pickAudience(many, [], { type: 'top' }, NOW);
+  assert.equal(top.length, 20);
+  assert.deepEqual(top.slice(0, 2).map((r) => r.name), ['C24', 'C23']);
+});
+
 test('inscritos: inclui quem nunca comprou e não repete a mesma pessoa', () => {
   const subs = [
     { phone: '551188880001', name: 'Aninha' }, // Ana sem o 9

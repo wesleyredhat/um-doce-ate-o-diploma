@@ -14,7 +14,13 @@ insert into coupons (code, kind, value, min_order, starts_on, ends_on, max_uses,
   ('TESTEMIN', 'fixed', 5, 30, null, null, null, true),
   ('TESTEOLD', 'percent', 10, 0, null, (now() at time zone 'America/Sao_Paulo')::date - 1, null, true),
   ('TESTENEW', 'percent', 10, 0, (now() at time zone 'America/Sao_Paulo')::date + 1, null, null, true),
-  ('TESTEOFF', 'percent', 10, 0, null, null, null, false);
+  ('TESTEOFF', 'percent', 10, 0, null, null, null, false),
+  ('TESTEHOJE', 'percent', 10, 0, (now() at time zone 'America/Sao_Paulo')::date, (now() at time zone 'America/Sao_Paulo')::date, null, true),
+  ('TESTERED', 'percent', 10, 0, null, null, null, true),
+  ('TESTEVENC', 'percent', 10, 100, null, (now() at time zone 'America/Sao_Paulo')::date - 1, null, true),
+  ('TESTEUM', 'fixed', 1, 0, null, null, 1, true),
+  ('TESTEVOLTA', 'percent', 10, 0, null, null, null, true);
+insert into products (id, name, price, cost, active) values ('00000000-0000-4000-8000-0000000000a2', 'Teste Quebrado', 6.67, 2, true);
 
 create function pg_temp.items(q int) returns jsonb language sql as
   $$ select jsonb_build_array(jsonb_build_object('product_id', '00000000-0000-4000-8000-0000000000a1', 'qty', q)) $$;
@@ -82,13 +88,51 @@ begin
   assert j->>'label' = '10%', 'rótulo em porcentagem: ' || j::text;
   assert (select count(*) from orders) = n, 'check_coupon não grava pedidos';
 
+  -- vigência: vale no primeiro e no último dia (cupom de um dia só: hoje, em Brasília)
+  r := place_order('Fábio Teste', '5500911110000', pg_temp.items(1), 'web', '', 'TESTEHOJE');
+  assert (r->>'discount')::numeric = 1, 'cupom de hoje vale: ' || r::text;
+
+  -- centavos: 5 x R$ 6,67 = R$ 33,35; 10% = 3,335, que vira 3,34
+  r := place_order('Gil Teste', '5500911110001', jsonb_build_array(jsonb_build_object('product_id', '00000000-0000-4000-8000-0000000000a2', 'qty', 5)), 'web', '', 'TESTERED');
+  assert (r->>'discount')::numeric = 3.34 and (r->>'total')::numeric = 30.01, 'arredondamento: ' || r::text;
+
+  -- ordem das recusas: vencido com pedido mínimo alto diz "expirado"; cota cheia diz "esgotado" até para quem já usou
+  perform pg_temp.fails_with('5500911110002', 'TESTEVENC', 1, 'Cupom expirado');
+  perform place_order('Hugo Teste', '5500911110003', pg_temp.items(1), 'web', '', 'TESTEUM');
+  perform pg_temp.fails_with('5500911110003', 'TESTEUM', 1, 'Cupom esgotado');
+
+  -- pedido cancelado libera a mesma pessoa (até pelo número sem o 9)
+  r := place_order('Íris Teste', '5500988881111', pg_temp.items(1), 'web', '', 'TESTEVOLTA');
+  update orders set status = 'cancelado' where code = r->>'code';
+  perform place_order('Íris Teste', '550088881111', pg_temp.items(1), 'whatsapp', '', 'TESTEVOLTA');
+
+  -- reabrir o pedido cancelado não fura o "uma vez por WhatsApp" (ela já usou de novo) nem a cota
+  begin
+    update orders set status = 'novo' where code = r->>'code';
+    raise exception using errcode = 'P0004', message = 'reabrir devia ser recusado (WhatsApp já usou)';
+  exception when raise_exception then
+    assert sqlerrm like 'Não dá para reabrir: este WhatsApp já usou o cupom TESTEVOLTA%', sqlerrm;
+  end;
+  update orders set status = 'cancelado' where customer_name = 'Hugo Teste';
+  perform place_order('Juca Teste', '5500911110004', pg_temp.items(1), 'web', '', 'TESTEUM');
+  begin
+    update orders set status = 'novo' where customer_name = 'Hugo Teste';
+    raise exception using errcode = 'P0004', message = 'reabrir devia ser recusado (cota cheia)';
+  exception when raise_exception then
+    assert sqlerrm like 'Não dá para reabrir: o cupom TESTEUM esgotou%', sqlerrm;
+  end;
+
   -- telefone com e sem o 9 é a mesma pessoa
   assert phone_key('5500988887777') = '5500988887777' and phone_key('550088887777') = '5500988887777' and phone_key('551133334444') = '551133334444', 'phone_key';
 
-  -- clientes: Ana aparece uma vez e o pedido cancelado não conta
-  select count(*) into n from admin_customers where phone_key = '5500988887777';
+  -- clientes: Ana com e sem o 9 aparece uma vez só, e o pedido cancelado não conta
+  perform place_order('Ana pelo Zap', '550088887777', pg_temp.items(1), 'whatsapp', '', null);
+  -- dentro da transação todos os pedidos têm a mesma hora: este passa a ser o mais recente
+  update orders set created_at = created_at + interval '1 minute' where customer_name = 'Ana pelo Zap';
+  select count(*) into n from admin_customers where phone_key in ('5500988887777', '550088887777');
   assert n = 1, 'Ana aparece uma vez só';
-  assert (select orders = 1 and spent = 0 and 'Teste Brigadeiro' = any (top_products) from admin_customers where phone_key = '5500988887777'), 'resumo da Ana';
+  assert (select orders = 2 and spent = 10 and name = 'Ana pelo Zap' and 'Teste Brigadeiro' = any (top_products)
+          from admin_customers where phone_key = '5500988887777'), 'resumo da Ana';
 end $$;
 
 rollback;

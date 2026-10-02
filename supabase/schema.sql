@@ -248,6 +248,29 @@ language sql stable security definer set search_path = public as $$
   select count(*)::int from orders where phone = regexp_replace(p_phone, '\D', '', 'g') and status = 'entregue';
 $$;
 
+-- Reabrir pedido cancelado com cupom (no painel) confere de novo a cota e o "uma vez por WhatsApp":
+-- o cancelamento devolveu o uso, que pode ter sido ocupado por outro pedido.
+create or replace function public.orders_coupon_reopen() returns trigger
+language plpgsql set search_path = public as $$
+declare
+  c coupons;
+begin
+  if old.status = 'cancelado' and new.status <> 'cancelado' and new.coupon_code is not null then
+    select * into c from coupons where code = new.coupon_code for update;
+    if found and c.max_uses is not null
+       and (select count(*) from orders where coupon_code = c.code and status <> 'cancelado' and id <> new.id) >= c.max_uses then
+      raise exception 'Não dá para reabrir: o cupom % esgotou depois do cancelamento', new.coupon_code;
+    end if;
+    if exists (select 1 from orders where coupon_code = new.coupon_code and status <> 'cancelado' and id <> new.id
+               and phone_key(phone) = phone_key(new.phone)) then
+      raise exception 'Não dá para reabrir: este WhatsApp já usou o cupom % em outro pedido', new.coupon_code;
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists orders_coupon_reopen on public.orders;
+create trigger orders_coupon_reopen before update of status on public.orders for each row execute function public.orders_coupon_reopen();
+
 -- Prévia do cupom para o site e o bot: as mesmas regras de place_order, sem gravar nada.
 create or replace function public.check_coupon(p_code text, p_phone text default '', p_items jsonb default '[]')
 returns jsonb language plpgsql security definer set search_path = public as $$

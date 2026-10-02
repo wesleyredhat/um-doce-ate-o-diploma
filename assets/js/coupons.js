@@ -3,7 +3,7 @@
 // JavaScript puro, sem dependências: roda no navegador e no Node.
 
 const brl = (v) => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
-// Centavos como o round(x, 2) do Postgres (o 1e-6 evita 3,335 virar 3,33 por erro de ponto flutuante).
+// Centavos como o round(x, 2) do Postgres (o 1e-6 evita que 10% de R$ 10,05, 1,005, vire 1,00 por erro de ponto flutuante).
 const cents = (v) => Math.round((Number(v) || 0) * 100 + 1e-6) / 100;
 
 // Chave da pessoa pelo telefone, com o 9 do celular: o WhatsApp às vezes usa o número antigo, sem o 9.

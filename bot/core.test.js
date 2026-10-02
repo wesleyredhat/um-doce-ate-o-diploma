@@ -462,3 +462,29 @@ test('cupom abaixo do pedido mínimo não trava a confirmação', async () => {
   assert.match((await say('1'))[0], /Pedido \*DD-TEST\* recebido/);
   assert.equal(orders[0].coupon, undefined);
 });
+
+test('cupom anotado continua depois de "menu"', async () => {
+  const { say } = setup();
+  await say('cupom VOLTA10');
+  await say('menu');
+  assert.match((await say('quero 10 brigadeiros'))[0], /Desconto VOLTA10: −R\$ 4,00/);
+});
+
+test('erro do banco na confirmação não apaga o cupom', async () => {
+  const { say, rows } = setup({ failOrder: true });
+  await say('quero 10 brigadeiros cupom VOLTA10');
+  await say('1');
+  assert.match((await say('1'))[0], /Ops, algo deu errado/);
+  assert.equal(rows.get(ANA).data.coupon, 'VOLTA10');
+});
+
+test('cupom em maiúsculas sem número, e código sozinho no meio do carrinho', async () => {
+  assert.equal(detectIntent('cupom NATAL', PRODUCTS), 'coupon');
+  assert.equal(detectIntent('cupom natal', PRODUCTS), null, 'minúsculas sem número: de propósito (pode ser conversa)');
+  const { say } = setup();
+  await say('menu');
+  await say('1');
+  await say('1');
+  await say('10');
+  assert.match((await say('VOLTA10'))[0], /anotado[\s\S]*Quer mais alguma coisa/);
+});

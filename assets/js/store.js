@@ -183,6 +183,13 @@ const DemoStore = {
   async updateOrder(id, patch) {
     const os = read('orders', []);
     const o = os.find((x) => x.id === id);
+    // Igual ao gatilho orders_coupon_reopen do banco: reabrir não pode furar a cota nem o "uma vez por WhatsApp".
+    if (o?.coupon_code && o.status === 'cancelado' && patch.status && patch.status !== 'cancelado') {
+      const c = read('coupons', []).find((x) => x.code === o.coupon_code);
+      const others = os.filter((x) => x.id !== o.id && x.coupon_code === o.coupon_code && x.status !== 'cancelado');
+      if (c?.max_uses != null && others.length >= c.max_uses) throw new Error(`Não dá para reabrir: o cupom ${o.coupon_code} esgotou depois do cancelamento`);
+      if (others.some((x) => phoneKey(x.phone) === phoneKey(o.phone))) throw new Error(`Não dá para reabrir: este WhatsApp já usou o cupom ${o.coupon_code} em outro pedido`);
+    }
     if (o) Object.assign(o, patch, { updated_at: new Date().toISOString() });
     write('orders', os);
   },

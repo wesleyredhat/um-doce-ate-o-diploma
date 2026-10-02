@@ -15,6 +15,7 @@ import pino from 'pino';
 import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engine.js';
 import { createCore, PAUSE_TTL_MS } from './core.js';
 import { createSender } from './sender.js';
+import { createSubscriptions } from './subscriptions.js';
 import { phoneKey } from '../assets/js/coupons.js';
 
 process.umask(0o077); // sessão do WhatsApp, log e trava só legíveis pelo próprio usuário
@@ -86,26 +87,29 @@ async function broadcast(news) {
   log(`novidade "${news.title}" enviada para ${sent} cliente(s)`);
 }
 
+// Inscrição nas novidades e lista de saída (regras em subscriptions.js). A lista de saída e as campanhas só
+// existem depois do schema novo: até lá, erro nessas tabelas não impede a inscrição de funcionar.
+const soft = ({ data, error, count }) => (error ? null : count ?? data);
+const subscriptions = createSubscriptions({
+  addSubscriber: async (phone, name) => { await db.from('subscribers').upsert({ phone, name }); },
+  removeSubscriber: async (phone) => !!soft(await db.from('subscribers').delete().eq('phone', phone).select('phone'))?.length,
+  addOptout: async (key, phone) => { await db.from('optouts').upsert({ phone_key: key, phone }); },
+  removeOptout: async (key) => { await db.from('optouts').delete().eq('phone_key', key); },
+  sentCount: async (key, since) => {
+    let q = db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('phone_key', key).eq('status', 'enviada');
+    if (since) q = q.gte('sent_at', since);
+    return soft(await q) || 0;
+  },
+});
+
 const ctx = {
   listProducts,
   getSettings: async () => (await db.from('settings').select('value').eq('key', 'store').maybeSingle()).data?.value ?? {},
   // Compara sem o 9 extra: o painel grava 55 11 9xxxx-xxxx, o WhatsApp às vezes usa o número antigo.
   isAdmin: async (phone) => ((await db.from('bot_admins').select('*')).data ?? []).find((a) => samePhone(a.phone, phone)) || null,
   listNews: async () => (await db.from('news').select('*').eq('published', true).order('created_at', { ascending: false }).limit(3)).data ?? [],
-  // "parar novidades/promoções" vale para tudo: sai dos inscritos e entra na lista de quem não quer receber.
-  // Devolve false quando a pessoa nem era inscrita nem recebeu campanha: o motor fica quieto (pode ser só conversa).
-  subscribe: async (phone, name, on) => {
-    const key = phoneKey(phone);
-    if (on) {
-      await db.from('subscribers').upsert({ phone, name });
-      await db.from('optouts').delete().eq('phone_key', key);
-      return;
-    }
-    const { data } = await db.from('subscribers').delete().eq('phone', phone).select('phone');
-    const { count } = await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('phone_key', key).eq('status', 'enviada');
-    await db.from('optouts').upsert({ phone_key: key, phone });
-    return !!data?.length || count > 0;
-  },
+  subscribe: (phone, name, on) => subscriptions.subscribe(phone, name, on),
+  gotCampaign: (phone) => subscriptions.gotCampaign(phone),
   checkCoupon: async (code, phone, items) => {
     const { data, error } = await db.rpc('check_coupon', { p_code: code, p_phone: phone, p_items: items });
     if (error) throw new Error(error.message);
@@ -129,12 +133,6 @@ const ctx = {
   broadcast: async () => ({ queued: true }),
   listOpenOrders: async () =>
     (await db.from('orders').select('*').in('status', ['novo', 'confirmado', 'producao', 'pronto']).order('created_at')).data ?? [],
-  // Recebeu campanha nos últimos 30 dias: "parar" ou "sair" sozinho vale como saída das promoções (core.js).
-  gotCampaign: async (phone) => {
-    const since = new Date(Date.now() - 30 * 864e5).toISOString();
-    const { count } = await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('phone_key', phoneKey(phone)).eq('status', 'enviada').gte('sent_at', since);
-    return count > 0;
-  },
   notifyHuman: async (phone, name) => {
     if (OWNER_PHONE) await sendText(toJid(OWNER_PHONE), `💬 ${name || 'Cliente'} (+${phone}) pediu atendimento humano no bot.`);
   },

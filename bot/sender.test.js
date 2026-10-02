@@ -7,7 +7,7 @@ const at = (iso) => Date.parse(iso);
 const NOON = at('2026-10-02T15:00:00Z'); // 12h em Brasília
 const iso = (ms) => new Date(ms).toISOString();
 
-function setup({ people = 3, settings = {}, optedOut = [], noWa = [], failSend = () => false } = {}) {
+function setup({ people = 3, settings = {}, optedOut = [], noWa = [], failSend = () => false, random = () => 0.5 } = {}) {
   let clock = NOON;
   let online = true;
   const campaigns = [{ id: 'c1', name: 'Volta', body: 'Oi, {nome}! Tem novidade.', coupon_code: 'VOLTA10', status: 'enviando', pause_reason: null }];
@@ -40,7 +40,7 @@ function setup({ people = 3, settings = {}, optedOut = [], noWa = [], failSend =
     lookup: async (phone) => (noWa.includes(phone) ? null : `${phone}@s.whatsapp.net`),
     send: async (jid, text) => { if (failSend(jid)) return false; sent.push({ jid, text }); return true; },
   };
-  const sender = createSender({ db, wa, siteUrl: 'https://umdoceateodiploma.com.br/', now: () => clock, random: () => 0.5, log: () => {} });
+  const sender = createSender({ db, wa, siteUrl: 'https://umdoceateodiploma.com.br/', now: () => clock, random, log: () => {} });
   return {
     tick: () => sender.tick(), sends, sent, campaigns,
     wait: (ms) => { clock += ms; }, setClock: (ms) => { clock = ms; }, setOnline: (v) => { online = v; },
@@ -119,4 +119,43 @@ test('WhatsApp desconectado: a fila só espera', async () => {
   setOnline(false);
   assert.equal(await tick(), 'offline');
   assert.equal(sent.length, 0);
+});
+
+test('intervalo sorteado entre 20 e 60 s, também depois de falha', async () => {
+  for (const [rnd, gap] of [[0, 20e3], [0.5, 40e3], [0.99, 59.6e3]]) {
+    const { tick, wait } = setup({ random: () => rnd });
+    assert.equal(await tick(), 'enviada');
+    wait(gap - 1);
+    assert.equal(await tick(), 'aguardando', `sorteio ${rnd}: ainda não`);
+    wait(1);
+    assert.equal(await tick(), 'enviada', `sorteio ${rnd}: depois de ${gap / 1000} s`);
+  }
+  const { tick, wait } = setup({ failSend: () => true });
+  assert.equal(await tick(), 'falhou');
+  wait(39e3);
+  assert.equal(await tick(), 'aguardando', 'depois de uma falha também espera');
+});
+
+test('envio bom zera a conta de falhas seguidas', async () => {
+  let fail = true;
+  const { tick, wait, campaigns } = setup({ people: 8, failSend: () => fail });
+  for (let i = 0; i < 4; i++) {
+    assert.equal(await tick(), 'falhou');
+    wait(40e3);
+  }
+  fail = false;
+  assert.equal(await tick(), 'enviada');
+  wait(40e3);
+  fail = true;
+  assert.equal(await tick(), 'falhou');
+  assert.equal(campaigns[0].status, 'enviando', '4 falhas, 1 envio bom e 1 falha não pausam');
+});
+
+test('ritmo mudado no painel vale sem reiniciar o bot (relido a cada minuto)', async () => {
+  const settings = {};
+  const { tick, wait } = setup({ people: 5, settings });
+  assert.equal(await tick(), 'enviada');
+  settings.daily_limit = 1;
+  wait(61e3);
+  assert.equal(await tick(), 'limite do dia');
 });

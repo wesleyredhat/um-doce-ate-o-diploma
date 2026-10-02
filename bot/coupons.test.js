@@ -22,6 +22,7 @@ test('desconto em porcentagem e em reais', () => {
   assert.deepEqual(check({ kind: 'fixed', value: 50 }), { valid: true, discount: 40 }, 'nunca passa do subtotal');
   assert.deepEqual(check({}, { subtotal: 33.35 }), { valid: true, discount: 3.34 }, 'arredonda como o banco');
   assert.deepEqual(check({ value: 12.5 }, { subtotal: 33.35 }), { valid: true, discount: 4.17 });
+  assert.deepEqual(check({}, { subtotal: 10.05 }), { valid: true, discount: 1.01 }, '1,005 vira 1,01, como no banco');
 });
 
 test('pedido mínimo', () => {
@@ -45,6 +46,12 @@ test('cota, uma vez por WhatsApp e pausado', () => {
   assert.equal(check({}, { usedByPhone: true }).message, 'Você já usou este cupom');
   assert.equal(check({ active: false }).message, 'Cupom pausado');
   assert.equal(evaluateCoupon(null, { subtotal: 40 }).message, 'Cupom não encontrado');
+});
+
+test('ordem das recusas: o pedido mínimo é o último', () => {
+  assert.equal(check({ min_order: 50, ends_on: '2026-09-30' }).message, 'Cupom expirado');
+  assert.equal(check({ min_order: 50 }, { usedByPhone: true }).message, 'Você já usou este cupom');
+  assert.equal(check({ max_uses: 1 }, { uses: 1, usedByPhone: true }).message, 'Cupom esgotado');
 });
 
 test('resposta no formato do check_coupon do banco', () => {

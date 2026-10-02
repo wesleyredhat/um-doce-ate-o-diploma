@@ -187,7 +187,9 @@ function openDialog(html, mount, { wide = false } = {}) {
   body.innerHTML = `<button class="icon-btn modal__x" data-close aria-label="Fechar">${icon('x')}</button>${html}`;
   // Sem "return false": um onclick que devolve false cancela o clique (salvar, marcar, links dentro da janela).
   body.onclick = (e) => { if (e.target.closest('[data-close]')) dlg.close(); };
-  dlg.onclick = (e) => { if (e.target === dlg) dlg.close(); };
+  let downOnBackdrop = false;
+  dlg.onmousedown = (e) => { downOnBackdrop = e.target === dlg; };
+  dlg.onclick = (e) => { if (downOnBackdrop && e.target === dlg) dlg.close(); };
   dlg.showModal();
   mount?.(body, () => dlg.close());
 }
@@ -423,12 +425,12 @@ function orderDialog() {
       $('#mtotal', m).textContent = money(lines.reduce((s, l) => s + l.qty * (prodById(l.product_id)?.price || 0), 0));
     };
     draw();
-    m.addEventListener('change', (e) => {
+    f.addEventListener('change', (e) => {
       if (e.target.dataset.ls) lines[+e.target.dataset.ls].product_id = e.target.value;
       if (e.target.dataset.lq) lines[+e.target.dataset.lq].qty = Math.max(1, parseInt(e.target.value, 10) || 1);
       draw();
     });
-    m.addEventListener('click', (e) => { const r = e.target.closest('[data-lr]'); if (r && lines.length > 1) { lines.splice(+r.dataset.lr, 1); draw(); } });
+    f.addEventListener('click', (e) => { const r = e.target.closest('[data-lr]'); if (r && lines.length > 1) { lines.splice(+r.dataset.lr, 1); draw(); } });
     $('#madd', m).onclick = () => { lines.push({ product_id: active[0].id, qty: 1 }); draw(); };
     f.onsubmit = async (e) => {
       e.preventDefault();
@@ -584,12 +586,17 @@ const FIN = { days: 30 };
 
 function productRank(list) {
   const agg = {};
-  list.forEach((o) => o.items.forEach((i) => {
-    const a = (agg[i.product_id] ||= { id: i.product_id, name: i.name, image: prodById(i.product_id)?.image, units: 0, revenue: 0, cost: 0 });
-    a.units += i.qty;
-    a.revenue += i.qty * i.unit_price;
-    a.cost += i.qty * i.unit_cost;
-  }));
+  list.forEach((o) => {
+    // Desconto de cupom rateado entre os itens do pedido: a soma dos produtos fecha com o total gravado.
+    const full = o.items.reduce((s, i) => s + i.qty * i.unit_price, 0);
+    const k = full ? Number(o.total) / full : 1;
+    o.items.forEach((i) => {
+      const a = (agg[i.product_id] ||= { id: i.product_id, name: i.name, image: prodById(i.product_id)?.image, units: 0, revenue: 0, cost: 0 });
+      a.units += i.qty;
+      a.revenue += i.qty * i.unit_price * k;
+      a.cost += i.qty * i.unit_cost;
+    });
+  });
   return Object.values(agg).map((a) => ({ ...a, profit: a.revenue - a.cost, margin: margin(a.revenue, a.cost) })).sort((a, b) => b.profit - a.profit);
 }
 
@@ -732,7 +739,7 @@ function viewNews(v, signal) {
 /* =================================================================== */
 /* Clientes                                                             */
 /* =================================================================== */
-const CF = { q: '', sort: 'last_order' };
+const CF = { q: '', sort: 'last_order', typing: false };
 const CUSTOMER_SORTS = {
   last_order: ['Último pedido', (a, b) => String(b.last_order).localeCompare(String(a.last_order))],
   orders: ['Mais pedidos', (a, b) => b.orders - a.orders],
@@ -782,10 +789,16 @@ async function viewCustomers(v, signal) {
       </table></div>
       ${list.length > 300 ? `<p class="hint">Mostrando 300 de ${list.length}. Use a busca para achar alguém.</p>` : ''}
     </section>`;
+  if (CF.typing) { // a busca redesenha a aba: o cursor continua no campo
+    CF.typing = false;
+    const i = $('#cq', v);
+    i.focus();
+    i.setSelectionRange(i.value.length, i.value.length);
+  }
   $('#cq', v).addEventListener('input', (e) => {
     CF.q = e.target.value;
     clearTimeout(viewCustomers.t);
-    viewCustomers.t = setTimeout(() => { render(); const i = $('#cq'); i?.focus(); i?.setSelectionRange(i.value.length, i.value.length); }, 250);
+    viewCustomers.t = setTimeout(() => { CF.typing = true; render(); }, 250);
   }, { signal });
   on(v, signal, 'click', '[data-sort]', (b) => { CF.sort = b.dataset.sort; render(); });
   $('#newCamp', v).onclick = () => campaignDialog();
@@ -847,9 +860,9 @@ function couponDialog(c = { code: '', kind: 'percent', value: '', min_order: 0, 
     <form class="form" id="cf">
       <div class="row">
         <label class="field"><span>Código</span><input class="input" name="code" required maxlength="20" value="${esc(c.code)}" placeholder="VOLTA10" style="text-transform:uppercase" ${locked ? 'readonly title="Já foi usado: o código não muda"' : ''} /></label>
-        <label class="field"><span>Desconto</span><span style="display:flex;gap:6px">
+        <label class="field"><span>Desconto</span><span style="display:flex;gap:6px;min-width:0">
           <select class="select" name="kind" style="width:auto"><option value="percent" ${c.kind === 'percent' ? 'selected' : ''}>%</option><option value="fixed" ${c.kind === 'fixed' ? 'selected' : ''}>R$</option></select>
-          <input class="input" name="value" type="number" step="0.01" min="0.01" required value="${c.value}" /></span></label>
+          <input class="input" name="value" type="number" step="0.01" min="0.01" required value="${c.value}" style="flex:1;min-width:0" /></span></label>
       </div>
       <div class="row">
         <label class="field"><span>Válido de</span><input class="input" name="starts_on" type="date" value="${c.starts_on || ''}" /></label>
@@ -901,18 +914,19 @@ function campaignCard(c) {
   const total = c.sends.length;
   const done = (n.enviada || 0) + (n.falhou || 0) + (n.pulada || 0);
   const queued = (n.pendente || 0) + (n.enviando || 0);
+  const off = c.status === 'cancelada'; // o que ficou na fila não sai mais
   const [label, color] = CAMP_STATUS[c.status] || CAMP_STATUS.pausada;
   return `<article class="camp">
     <div class="camp__head"><h3>${esc(c.name)}</h3><span class="status-line"><span class="dot" style="background:${color}"></span>${label}</span></div>
     <p class="hint">${fmtDateTime(c.created_at)} · ${esc(AUDIENCES[c.audience?.type] || 'Público escolhido')}${c.coupon_code ? ` · cupom <b>${esc(c.coupon_code)}</b>` : ''}</p>
     <div class="progress" role="progressbar" aria-label="Progresso" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
-    <p class="camp__nums"><b>${n.enviada || 0}</b> ${(n.enviada || 0) === 1 ? 'enviada' : 'enviadas'} de ${total}${queued ? ` · ${queued} na fila` : ''}${n.falhou ? ` · ${plural(n.falhou, 'falhou', 'falharam')}` : ''}${n.pulada ? ` · ${plural(n.pulada, 'pulada', 'puladas')}` : ''}</p>
+    <p class="camp__nums"><b>${n.enviada || 0}</b> ${(n.enviada || 0) === 1 ? 'enviada' : 'enviadas'} de ${total}${queued ? ` · ${off ? plural(queued, 'não enviada', 'não enviadas') : `${queued} na fila`}` : ''}${n.falhou ? ` · ${plural(n.falhou, 'falhou', 'falharam')}` : ''}${n.pulada ? ` · ${plural(n.pulada, 'pulada', 'puladas')}` : ''}</p>
     ${c.status === 'pausada' && c.pause_reason ? `<p class="err">${esc(c.pause_reason)}</p>` : ''}
     <div class="camp__actions">
       ${c.status === 'enviando' ? `<button class="btn btn--soft btn--sm" data-camp="${c.id}" data-to="pausada">Pausar</button>` : ''}
       ${c.status === 'pausada' ? `<button class="btn btn--sm" data-camp="${c.id}" data-to="enviando">Retomar</button>` : ''}
       ${['enviando', 'pausada'].includes(c.status) ? `<button class="btn btn--ghost btn--sm" data-camp="${c.id}" data-to="cancelada">Cancelar</button>` : ''}
-      <details><summary>Ver lista</summary><ul class="camp__list">${c.sends.map((s) => `<li>${esc(s.name || formatPhone(s.phone))} <small>${SEND_LABEL[s.status] || s.status}${s.error ? `: ${esc(s.error)}` : ''}</small></li>`).join('')}</ul></details>
+      <details><summary>Ver lista</summary><ul class="camp__list">${c.sends.map((s) => `<li>${esc(s.name || formatPhone(s.phone))} <small>${off && (s.status === 'pendente' || s.status === 'enviando') ? 'não enviada (campanha cancelada)' : SEND_LABEL[s.status] || s.status}${s.error ? `: ${esc(s.error)}` : ''}</small></li>`).join('')}</ul></details>
     </div>
   </article>`;
 }
