@@ -9,11 +9,12 @@ const ORDER = {
   items: [{ name: 'Brigadeiro', qty: 10 }, { name: 'Empadinha', qty: 2 }], total: 66, discount: 0,
 };
 
-function setup({ notices = [], online = true, jid = (p) => `${p}@s.whatsapp.net`, sendOk = true, claimOk = true, store = { pix_key: 'pix@doce.com' } } = {}) {
+function setup({ notices = [], online = true, jid = (p) => `${p}@s.whatsapp.net`, sendOk = true, claimOk = true, store = { pix_key: 'pix@doce.com' }, stamps = 1 } = {}) {
   const rows = notices.map((n, i) => ({ id: i + 1, status: 'pendente', error: null, sent_at: null, created_at: new Date(NOW - 60e3).toISOString(), ...n }));
   const sent = [];
   const db = {
     settings: async () => store,
+    stamps: async () => stamps,
     pending: async () => rows.filter((r) => r.status === 'pendente').sort((a, b) => a.id - b.id),
     claim: async (id) => {
       const r = claimOk && rows.find((x) => x.id === id && x.status === 'pendente');
@@ -35,7 +36,7 @@ test('confirmação: itens e total, e o Pix Copia e Cola sozinho numa segunda me
   assert.match(a, /^Oi, Ana! Seu pedido \*DD-K7P2\* está confirmado ✅/);
   assert.match(a, /• 10x Brigadeiro\n• 2x Empadinha\nTotal: \*R\$ 66,00\*/);
   assert.match(a, /💸 \*Pagamento por Pix\*\nCopie o código da próxima mensagem e cole no app do banco em \*Pix Copia e Cola\*/);
-  assert.match(a, /_Se preferir, a chave é e-mail pix@doce\.com_/);
+  assert.match(a, /valor certinho\.\n\n_Se preferir, a chave é e-mail pix@doce\.com_/, 'linha em branco depois de "valor certinho."');
   assert.match(a, /comprovante/);
   assert.match(b, /^000201/, 'segunda mensagem: só o código');
   assert.ok(b.includes('0112pix@doce.com') && b.includes('540566.00') && b.includes('0506DDK7P2'), b);
@@ -135,4 +136,27 @@ test('pronto com observação do pedido: repete o que a cliente escreveu em vez 
   assert.match(a, /📝 Você escreveu: "retirar quinta às 10h"\nSe algo mudou, me avisa por aqui/);
   assert.doesNotMatch(a, /Me conta o melhor horário/);
   assert.match(noticeTexts('pronto', { ...ORDER, notes: '  ' }, {})[0], /Me conta o melhor horário/, 'observação em branco não conta');
+});
+
+test('entregue: agradecimento com os capelos da Carteirinha do Formando', () => {
+  const [a] = noticeTexts('entregue', { ...ORDER, status: 'entregue', stamps: 3 }, {});
+  assert.match(a, /^Oi, Ana! Pedido \*DD-K7P2\* entregue 🎓🍫\nMuito obrigada pela preferência/);
+  assert.match(a, /Carteirinha do Formando: \*3 de 10 capelos\*\. Faltam 7 para ganhar 1 brigadeiro de presente\./);
+  assert.match(noticeTexts('entregue', { ...ORDER, stamps: 9 }, {})[0], /Falta 1 para ganhar/);
+  assert.match(noticeTexts('entregue', { ...ORDER, stamps: 10 }, {})[0], /completou a Carteirinha do Formando: \*10 de 10 capelos\*! Seu próximo pedido vem com 1 brigadeiro de presente/);
+  assert.match(noticeTexts('entregue', { ...ORDER, stamps: 13 }, {})[0], /\*3 de 10 capelos\*/, 'depois de completar, conta de novo');
+  assert.doesNotMatch(noticeTexts('entregue', { ...ORDER, stamps: 0 }, {})[0], /capelos/, 'sem contagem, sem a linha');
+});
+
+test('entregue: envia com a contagem do banco; pedido que voltou atrás espera', async () => {
+  const a = setup({ notices: [{ kind: 'entregue', order: { ...ORDER, status: 'entregue' } }], stamps: 4 });
+  await a.tick();
+  assert.equal(a.rows[0].status, 'enviada');
+  assert.match(a.sent[0].text, /4 de 10 capelos/);
+  const b = setup({ notices: [{ kind: 'entregue', order: { ...ORDER, status: 'pronto' } }] });
+  await b.tick();
+  assert.equal(b.rows[0].status, 'pendente');
+  const c = setup({ notices: [{ kind: 'entregue', order: { ...ORDER, status: 'cancelado' } }] });
+  await c.tick();
+  assert.equal(c.rows[0].status, 'pulada');
 });

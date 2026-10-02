@@ -218,7 +218,7 @@ const sender = createSender({
   wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
 });
 
-// Avisos do pedido (Pix na confirmação, "pronto para entrega"): o banco cria a fila em order_notices
+// Avisos do pedido (Pix na confirmação, "pronto para entrega", agradecimento na entrega): o banco cria a fila em order_notices
 // quando o status muda na esteira do painel. Regras em notices.js.
 const notices = createNotices({
   db: {
@@ -228,6 +228,7 @@ const notices = createNotices({
       .eq('status', 'pendente').order('id').limit(50)),
     claim: async (id) => !!must(await db.from('order_notices').update({ status: 'enviando' }).eq('id', id).eq('status', 'pendente').select('id')).length,
     mark: async (id, patch) => must(await db.from('order_notices').update(patch).eq('id', id)),
+    stamps: async (phone) => must(await db.rpc('loyalty_stamps', { p_phone: phone })) || 0,
   },
   wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
   log,

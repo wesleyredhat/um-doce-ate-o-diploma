@@ -361,10 +361,13 @@ async function setStatus(id, status) {
     S.seen.add(id);
     updateNewPill();
     render();
-    // Mesmas regras do gatilho orders_notice (supabase/schema.sql): saiu de "novo" = Pix; chegou em "pronto" = aviso.
-    const pix = prev === 'novo' && ['confirmado', 'producao', 'pronto'].includes(status);
-    const ready = status === 'pronto';
-    if (pix || ready) noticeToast(o, pix && ready ? 'o Pix e o aviso de pronto' : pix ? 'o Pix' : 'o aviso de pronto');
+    // Mesmas regras do gatilho orders_notice (supabase/schema.sql): saiu de "novo" = Pix; "pronto" = aviso; "entregue" = agradecimento.
+    const what = [
+      prev === 'novo' && ['confirmado', 'producao', 'pronto'].includes(status) && 'o Pix',
+      status === 'pronto' && 'o aviso de pronto',
+      status === 'entregue' && 'o agradecimento',
+    ].filter(Boolean).join(' e ');
+    if (what) noticeToast(o, what);
   } catch (e) {
     o.status = prev;
     toast(e.message, 'err');

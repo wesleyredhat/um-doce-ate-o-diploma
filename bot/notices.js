@@ -1,22 +1,37 @@
 // Avisos automáticos do pedido pelo WhatsApp. Um gatilho do banco (orders_notice, em supabase/schema.sql)
 // cria o aviso quando o status muda na esteira do painel:
 //   - confirmado: confirmação com itens e total e, numa segunda mensagem, só o Pix Copia e Cola (já com o valor);
-//   - pronto: pedido disponível para entrega (na entrega com dia marcado, o lugar e o dia).
+//   - pronto: pedido disponível para entrega (na entrega com dia marcado, o lugar e o dia);
+//   - entregue: agradecimento com os capelos da Carteirinha do Formando.
 // Aviso de pedido que voltou atrás espera; de pedido cancelado (ou "pronto" já entregue) e com mais de 1 dia, pula.
 // Sem Baileys nem Supabase aqui: index.js liga isso ao WhatsApp e notices.test.js testa com dados falsos.
 import { deliveryText } from '../supabase/functions/_shared/delivery.js';
 import { orderPix } from '../supabase/functions/_shared/pix.js';
+import { CONFIG } from '../assets/js/config.js';
 
 export const NOTICE_MAX_AGE_MS = 864e5;
 
 const brl = (v) => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
 // Status em que cada aviso ainda faz sentido; 'novo' (e "pronto" antes de ficar pronto) espera na fila.
-const VALID = { confirmado: ['confirmado', 'producao', 'pronto'], pronto: ['pronto'] };
-const WAIT = { confirmado: ['novo'], pronto: ['novo', 'confirmado', 'producao'] };
+const VALID = { confirmado: ['confirmado', 'producao', 'pronto'], pronto: ['pronto'], entregue: ['entregue'] };
+const WAIT = { confirmado: ['novo'], pronto: ['novo', 'confirmado', 'producao'], entregue: ['novo', 'confirmado', 'producao', 'pronto'] };
+
+// Capelos da carteirinha depois desta entrega (o.stamps conta os pedidos entregues, este incluído).
+function loyaltyLine(stamps) {
+  const goal = CONFIG.LOYALTY_GOAL;
+  if (!(stamps > 0)) return '';
+  const n = stamps % goal || goal;
+  if (n === goal) return `\n\n🎉 Você completou a Carteirinha do Formando: *${goal} de ${goal} capelos*! Seu próximo pedido vem com ${CONFIG.LOYALTY_REWARD}.`;
+  const left = goal - n;
+  return `\n\n🎓 Carteirinha do Formando: *${n} de ${goal} capelos*. ${left === 1 ? 'Falta 1' : `Faltam ${left}`} para ganhar ${CONFIG.LOYALTY_REWARD}.`;
+}
 
 export function noticeTexts(kind, o, store = {}) {
   const first = o.customer_name.split(' ')[0];
   const spot = o.delivery === 'ponto' && o.delivery_date;
+  if (kind === 'entregue') {
+    return [`Oi, ${first}! Pedido *${o.code}* entregue 🎓🍫\nMuito obrigada pela preferência, espero que você goste de cada pedacinho 💛${loyaltyLine(o.stamps)}`];
+  }
   if (kind === 'pronto') {
     // Usa o que a cliente já informou (dia marcado ou observação do pedido) em vez de perguntar de novo.
     if (spot) return [`Oi, ${first}! Seu pedido *${o.code}* está prontinho 🎓🍫\n📍 Entrega: ${deliveryText(o, store)}\nTe espero lá 💛`];
@@ -33,12 +48,13 @@ export function noticeTexts(kind, o, store = {}) {
   // O código vai sozinho na mensagem seguinte: um toque longo copia só ele. (O cartão Pix do WhatsApp Business
   // não aparece quando enviado pelo WhatsApp comum, nem no celular: testado em 02/10/2026.)
   return [
-    `${head}\n\n💸 *Pagamento por Pix*\nCopie o código da próxima mensagem e cole no app do banco em *Pix Copia e Cola*: já vai com o valor certinho.\n_Se preferir, a chave é ${pix.label}_\n\nDepois é só mandar o comprovante por aqui 💛`,
+    `${head}\n\n💸 *Pagamento por Pix*\nCopie o código da próxima mensagem e cole no app do banco em *Pix Copia e Cola*: já vai com o valor certinho.\n\n_Se preferir, a chave é ${pix.label}_\n\nDepois é só mandar o comprovante por aqui 💛`,
     pix.code,
   ];
 }
 
-// db: settings() → settings.store, pending() → [{id, kind, created_at, order}], claim(id) → true se pegou, mark(id, campos)
+// db: settings() → settings.store, pending() → [{id, kind, created_at, order}], claim(id) → true se pegou, mark(id, campos),
+//     stamps(telefone) → pedidos entregues (Carteirinha do Formando)
 // wa: online(), lookup(telefone) → jid ou null, send(jid, texto) → true/false
 export function createNotices({ db, wa, now = () => Date.now(), log = console.log }) {
   let busy = false;
@@ -66,8 +82,9 @@ export function createNotices({ db, wa, now = () => Date.now(), log = console.lo
         await db.mark(n.id, { status: 'falhou', error: 'Número sem WhatsApp' });
         continue;
       }
+      const order = n.kind === 'entregue' ? { ...o, stamps: await db.stamps(o.phone).catch(() => 0) } : o;
       let ok = true;
-      for (const text of noticeTexts(n.kind, o, store)) ok = ok && (await wa.send(jid, text));
+      for (const text of noticeTexts(n.kind, order, store)) ok = ok && (await wa.send(jid, text));
       if (ok) {
         await db.mark(n.id, { status: 'enviada', sent_at: new Date(now()).toISOString(), error: null });
         log(`aviso "${n.kind}" do pedido ${o.code} enviado`);

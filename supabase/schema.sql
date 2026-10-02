@@ -139,12 +139,12 @@ create table if not exists public.campaign_sends (
 create index if not exists campaign_sends_queue_idx on public.campaign_sends (campaign_id, status);
 create index if not exists campaign_sends_sent_idx on public.campaign_sends (sent_at) where status = 'enviada';
 
--- Avisos automáticos do pedido pelo WhatsApp (bot/notices.js): Pix na confirmação e "pronto para entrega".
+-- Avisos automáticos do pedido pelo WhatsApp (bot/notices.js): Pix na confirmação, "pronto para entrega" e agradecimento na entrega.
 -- O gatilho orders_notice cria a linha quando o status muda; uma por pedido e tipo, então não repete.
 create table if not exists public.order_notices (
   id bigint generated always as identity primary key,
   order_id uuid not null references public.orders (id) on delete cascade,
-  kind text not null check (kind in ('confirmado', 'pronto')),
+  kind text not null check (kind in ('confirmado', 'pronto', 'entregue')),
   status text not null default 'pendente' check (status in ('pendente', 'enviando', 'enviada', 'falhou', 'pulada')),
   error text,
   created_at timestamptz not null default now(),
@@ -152,6 +152,9 @@ create table if not exists public.order_notices (
   unique (order_id, kind)
 );
 create index if not exists order_notices_pending_idx on public.order_notices (id) where status = 'pendente';
+-- Banco criado antes do agradecimento: a regra antiga só aceitava 'confirmado' e 'pronto'.
+alter table public.order_notices drop constraint if exists order_notices_kind_check;
+alter table public.order_notices add constraint order_notices_kind_check check (kind in ('confirmado', 'pronto', 'entregue'));
 
 -- ------------------------------------------------------------------
 -- Funções
@@ -302,7 +305,8 @@ drop trigger if exists orders_coupon_reopen on public.orders;
 create trigger orders_coupon_reopen before update of status on public.orders for each row execute function public.orders_coupon_reopen();
 
 -- Saiu de "novo" para a esteira (confirmado, ou arrastado direto para produção ou pronto): aviso com o Pix.
--- Chegou em "pronto": aviso de disponível para entrega. Reabrir e confirmar de novo não repete (unique).
+-- Chegou em "pronto": aviso de disponível para entrega. Chegou em "entregue": agradecimento.
+-- Reabrir e confirmar de novo não repete (unique).
 create or replace function public.orders_notice() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
@@ -311,6 +315,9 @@ begin
   end if;
   if new.status = 'pronto' and old.status is distinct from 'pronto' then
     insert into order_notices (order_id, kind) values (new.id, 'pronto') on conflict do nothing;
+  end if;
+  if new.status = 'entregue' and old.status is distinct from 'entregue' then
+    insert into order_notices (order_id, kind) values (new.id, 'entregue') on conflict do nothing;
   end if;
   return new;
 end $$;

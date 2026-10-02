@@ -64,9 +64,10 @@ Bot:     resumo com 📍 Entrega → 1 Confirmar
 Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · vou conferir a agenda e confirmo com a chave Pix
 Painel:  Confirmar → Bot: pedido confirmado (itens, total, entrega, chave legível) + (2ª mensagem) só o Pix Copia e Cola com o valor
 Painel:  Pronto    → Bot: prontinho; no ponto, o lugar e o dia; senão a observação do pedido ou "vamos combinar"
+Painel:  Entregue  → Bot: obrigada pela preferência + capelos da Carteirinha do Formando (ou "completou!")
 ```
 
-- **Avisos do pedido**: um gatilho do banco (`orders_notice`) cria a fila em `order_notices` quando o pedido sai de Novo (Pix) e quando chega em Pronto; o bot do Mac envia em até 10 s (`bot/notices.js`). Uma vez por pedido e tipo; pedido cancelado, "pronto" já entregue ou aviso com mais de 1 dia (bot desligado) é pulado.
+- **Avisos do pedido**: um gatilho do banco (`orders_notice`) cria a fila em `order_notices` quando o pedido sai de Novo (Pix), chega em Pronto e chega em Entregue (agradecimento); o bot do Mac envia em até 10 s (`bot/notices.js`). Uma vez por pedido e tipo; pedido cancelado, "pronto" já entregue ou aviso com mais de 1 dia (bot desligado) é pulado.
 
 - **Atalho em linguagem natural**: “quero 10 brigadeiros e 2 empadinhas”, “uma dúzia de casadinhos” → o bot monta o carrinho e pula direto para o nome.
 - **Comandos globais**: `menu`, `oi`, `cancelar`.
@@ -120,7 +121,7 @@ optouts     (phone_key, phone, created_at)              quem pediu para não rec
 campaigns   (id, name, body, coupon_id, audience jsonb, status[enviando|pausada|concluida|cancelada], pause_reason, created_at, finished_at)
 campaign_sends (id, campaign_id, phone, phone_key, name, status[pendente|enviando|enviada|falhou|pulada], error, claimed_at, sent_at)
 orders.delivery [ponto|combinar], orders.delivery_date   ← ponto = settings.store.delivery_spot {label, days[0-6]}, de amanhã até 14 dias
-order_notices (id, order_id, kind[confirmado|pronto], status[pendente|enviando|enviada|falhou|pulada], error, created_at, sent_at)   ← um por pedido e tipo
+order_notices (id, order_id, kind[confirmado|pronto|entregue], status[pendente|enviando|enviada|falhou|pulada], error, created_at, sent_at)   ← um por pedido e tipo
              orders também guarda coupon_code e discount (total = subtotal − desconto)
 view admin_customers  quem comprou, agrupado por phone_key (só admin)
 ```
