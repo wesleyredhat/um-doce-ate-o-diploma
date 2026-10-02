@@ -100,7 +100,8 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.
 7. **Cupons**: % ou R$, pedido mínimo, vigência por data, cota de usos, uma vez por WhatsApp; mostra usos, vendas e desconto dado.
 8. **Campanhas**: público por filtro (todos, sumidos, quem comprou um produto, 3 pedidos ou mais, os 20 que mais gastaram, inscritos), mensagem com `{nome}` e cupom opcional, prévia, estimativa de término e progresso. O bot envia uma mensagem a cada 20 a 60 s, no horário e no limite diário configurados.
-9. **Bot WhatsApp** fica fora do menu do painel, na página `/bot/` (`bot/index.html`, mesmo login): conexão do WhatsApp (QR Code ou código), números autorizados e simulador.
+9. **Fidelidade**: brinde a entregar (completaram a Carteirinha do Formando, botão "Entreguei o brinde") e quase lá (faltam 3 ou menos, mensagem pronta no WhatsApp). Cartão do pedido de quem tem brinde mostra 🎁; ao marcar Entregue, o painel pergunta se o brinde foi junto. Capelos = pedidos entregues por pessoa (com e sem o 9).
+10. **Bot WhatsApp** fica fora do menu do painel, na página `/bot/` (`bot/index.html`, mesmo login): conexão do WhatsApp (QR Code ou código), números autorizados e simulador.
 
 ## 3. Estrutura de dados
 
@@ -121,6 +122,7 @@ optouts     (phone_key, phone, created_at)              quem pediu para não rec
 campaigns   (id, name, body, coupon_id, audience jsonb, status[enviando|pausada|concluida|cancelada], pause_reason, created_at, finished_at)
 campaign_sends (id, campaign_id, phone, phone_key, name, status[pendente|enviando|enviada|falhou|pulada], error, claimed_at, sent_at)
 orders.delivery [ponto|combinar], orders.delivery_date   ← ponto = settings.store.delivery_spot {label, days[0-6]}, de amanhã até 14 dias
+loyalty_rewards (id, phone_key, order_id, given_at)   ← brindes da carteirinha já entregues; admin_customers traz delivered e rewards_given
 order_notices (id, order_id, kind[confirmado|pronto|entregue], status[pendente|enviando|enviada|falhou|pulada], error, created_at, sent_at)   ← um por pedido e tipo
              orders também guarda coupon_code e discount (total = subtotal − desconto)
 view admin_customers  quem comprou, agrupado por phone_key (só admin)

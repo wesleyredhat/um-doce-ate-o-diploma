@@ -251,3 +251,12 @@ table.t { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width:
 .aud__list { display: grid; gap: 4px; max-height: 220px; overflow: auto; margin-top: 8px; font-size: 0.9rem; }
 .aud__list small { color: var(--ink-soft); }
 .preview-msg { max-width: none; }
+
+/* Fidelidade: linhas que quebram em vez de tabela larga */
+.lrows { display: grid; }
+.lrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.lrow:first-child { border-top: 0; }
+.lrow__who { flex: 1 1 150px; min-width: 0; display: grid; }
+.lrow__who .hint { margin: 0; }
+.lrow__stamps { flex: 0 1 150px; font-variant-numeric: tabular-nums; }
+.lrow__act { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }

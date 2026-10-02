@@ -7,7 +7,8 @@ import {
   $, $$, esc, money, pct, margin, fmtDate, fmtDateTime, timeAgo, startOfDay, formatPhone, normalizePhone,
   waLink, toast, maskPhoneInput, isValidPhone,
 } from './utils.js';
-import { couponState, couponLabel, normCode } from './coupons.js';
+import { couponState, couponLabel, normCode, phoneKey } from './coupons.js';
+import { loyaltyOf, capelosText, loyaltyMessage } from './loyalty.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
 import { WEEKDAYS, dayLabel, deliveryText } from '../../supabase/functions/_shared/delivery.js';
 import { PIX_TYPES, orderPix, pixKey, pixKeyType } from '../../supabase/functions/_shared/pix.js';
@@ -23,6 +24,7 @@ const VIEWS = BOT_PAGE ? { bot: ['Bot WhatsApp', viewBot] } : {
   financeiro: ['Financeiro', viewFinance],
   novidades: ['Novidades', viewNews],
   clientes: ['Clientes', viewCustomers],
+  fidelidade: ['Fidelidade', viewLoyalty],
   campanhas: ['Campanhas', viewCampaigns],
   cupons: ['Cupons', viewCoupons],
   ajustes: ['Ajustes', viewSettings],
@@ -100,7 +102,7 @@ $('#refreshBtn').addEventListener('click', async () => { await loadAll(); render
 $('#newOrderBtn')?.addEventListener('click', () => orderDialog());
 $('#moreBtn')?.addEventListener('click', () => {
   openDialog(`<h2>Mais</h2><div class="more-grid">
-    ${['produtos', 'novidades', 'clientes', 'campanhas', 'cupons', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', campanhas: 'send', cupons: 'tag', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
+    ${['produtos', 'novidades', 'clientes', 'fidelidade', 'campanhas', 'cupons', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', fidelidade: 'heart', campanhas: 'send', cupons: 'tag', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
     <a href="./" target="_blank">${icon('ext')} Ver loja</a>
     <button id="mLogout">${icon('logout')} Sair</button></div>`, (m) => {
     $('#mLogout', m).onclick = () => $('#logoutBtn').click();
@@ -115,7 +117,20 @@ async function loadAll() {
   ]);
   S.customers = null;
   updateNewPill();
+  if (!BOT_PAGE) refreshRewards();
 }
+
+// Quem tem brinde da Carteirinha do Formando a receber: aparece "🎁 brinde" nos pedidos em aberto dela.
+// Carrega depois do resto (lista de clientes inteira); banco sem a fidelidade = sem o aviso, sem erro.
+function refreshRewards() {
+  customers().then((list) => {
+    const due = new Map(list.map((c) => [c.phone_key, loyaltyOf(c).pending]).filter(([, n]) => n > 0));
+    const changed = [...due].join() !== [...(S.rewardsDue || new Map())].join();
+    S.rewardsDue = due;
+    if (changed && ['inicio', 'pedidos'].includes(S.view)) render();
+  }).catch(() => {});
+}
+const rewardDue = (o) => !['entregue', 'cancelado'].includes(o.status) && !!S.rewardsDue?.get(phoneKey(o.phone));
 
 // Roda também com a aba em segundo plano (o navegador espaça para 1 vez por minuto): o aviso não espera a aba voltar.
 async function poll() {
@@ -322,7 +337,7 @@ function orderCard(o) {
   const s = st(o.status);
   const fresh = !S.seen.has(o.id);
   return `<article class="ocard ${fresh ? 'fresh' : ''}" style="--st:${s.color}" draggable="true" data-id="${o.id}">
-    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
+    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}${rewardDue(o) ? `<span class="ch" title="Completou a Carteirinha do Formando: coloque ${esc(CONFIG.LOYALTY_REWARD)} neste pedido">🎁 brinde</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
     <div class="ocard__who">${esc(o.customer_name)} <a href="${waLink('', o.phone)}" target="_blank" rel="noopener" style="font-weight:600;font-size:.82rem;color:var(--ink-soft)">${formatPhone(o.phone)}</a></div>
     <ul>${o.items.map((i) => `<li>${i.qty}× ${esc(i.name)}</li>`).join('')}</ul>
     ${o.notes ? `<div class="ocard__notes">📝 ${esc(o.notes)}</div>` : ''}
@@ -355,9 +370,14 @@ async function setStatus(id, status) {
   const o = S.orders.find((x) => x.id === id);
   if (!o) return;
   const prev = o.status;
+  const withReward = status === 'entregue' && rewardDue(o);
   o.status = status;
   try {
     await store.updateOrder(id, { status });
+    if (withReward && confirm(`${o.customer_name} completou a Carteirinha do Formando. O brinde (${CONFIG.LOYALTY_REWARD}) foi junto com este pedido?`)) {
+      await store.giveReward({ phone_key: phoneKey(o.phone), order_id: o.id }).then(() => toast('Brinde registrado 🎁'), (e) => toast(dbError(e), 'err'));
+    }
+    if (status === 'entregue') { S.customers = null; refreshRewards(); }
     S.seen.add(id);
     updateNewPill();
     render();
@@ -797,6 +817,59 @@ async function customers() {
   return S.customers;
 }
 
+// Carteirinha do Formando: quem tem brinde a receber e quem está perto. Regras em loyalty.js.
+async function viewLoyalty(v, signal) {
+  if (!S.customers) v.innerHTML = '<p class="hint">Carregando clientes…</p>';
+  let all;
+  try { all = await customers(); } catch (e) { v.innerHTML = `<p class="err">${esc(dbError(e))}</p>`; return; }
+  if (signal.aborted) return;
+  if (all.length && all[0].delivered === undefined) { v.innerHTML = `<p class="err">${esc(dbError({ message: 'does not exist' }))}</p>`; return; }
+  const goal = CONFIG.LOYALTY_GOAL;
+  const rows = all.map((c) => ({ c, l: loyaltyOf(c) }));
+  const due = rows.filter((r) => r.l.pending).sort((a, b) => String(b.c.last_order).localeCompare(String(a.c.last_order)));
+  const near = rows.filter((r) => !r.l.pending && r.l.stamps && r.l.left <= 3).sort((a, b) => a.l.left - b.l.left || String(b.c.last_order).localeCompare(String(a.c.last_order)));
+  const wa = (c, l) => `<a class="btn btn--soft btn--sm" href="${waLink(loyaltyMessage(c, l), c.phone)}" target="_blank" rel="noopener">${icon('wa')} Avisar</a>`;
+  const who = (c) => `<b>${esc(c.name)}</b><a href="${waLink('', c.phone)}" target="_blank" rel="noopener" class="hint">${formatPhone(c.phone)}</a>`;
+  v.innerHTML = `
+    <div class="kpis">
+      ${kpi('Brinde a entregar', due.length, 'completaram a carteirinha', 'heart', true)}
+      ${kpi('Quase lá', near.length, 'faltam 3 pedidos ou menos', 'clock')}
+      ${kpi('Participando', rows.filter((r) => r.l.delivered).length, 'com pelo menos 1 capelo', 'users')}
+      ${kpi('Brindes entregues', all.reduce((s, c) => s + (c.rewards_given || 0), 0), 'desde o começo', 'check')}
+    </div>
+    <div class="cols cols--even">
+      <section class="panel"><div class="panel__head"><div><h2>🎁 Brinde a entregar</h2><p>Completaram ${goal} capelos. Coloque ${esc(CONFIG.LOYALTY_REWARD)} no próximo pedido (o cartão do pedido mostra 🎁) e registre aqui.</p></div></div>
+        <div class="lrows">${due.map(({ c, l }) => `<div class="lrow">
+          <div class="lrow__who">${who(c)}</div><div class="lrow__stamps">${capelosText(l)}${l.pending > 1 ? ` · ${l.pending} brindes` : ''}</div>
+          <div class="lrow__act">${wa(c, l)}<button class="btn btn--sm" data-give="${esc(c.phone_key)}">Entreguei o brinde</button></div></div>`).join('')
+          || '<p class="empty">Ninguém completou a carteirinha ainda.</p>'}</div>
+      </section>
+      <section class="panel"><div class="panel__head"><div><h2>Quase lá</h2><p>Faltam 3 pedidos ou menos. Um lembrete pelo WhatsApp pode trazer o próximo pedido.</p></div></div>
+        <div class="lrows">${near.map(({ c, l }) => `<div class="lrow">
+          <div class="lrow__who">${who(c)}</div>
+          <div class="lrow__stamps"><b>${l.stamps} de ${goal}</b> · ${l.left === 1 ? 'falta 1' : `faltam ${l.left}`}<div class="progress" style="margin-top:6px"><i style="width:${(l.stamps / goal) * 100}%"></i></div></div>
+          <div class="lrow__act">${c.opted_out ? '<span class="ch" title="Pediu para não receber promoções">sem promoções</span>' : wa(c, l)}</div></div>`).join('')
+          || '<p class="empty">Ninguém perto do brinde agora.</p>'}</div>
+      </section>
+    </div>
+    <p class="hint">Cada pedido entregue vale 1 capelo; a cada ${goal}, ${esc(CONFIG.LOYALTY_REWARD)}. Pedidos com e sem o 9 no WhatsApp contam para a mesma pessoa.</p>`;
+  on(v, signal, 'click', '[data-give]', async (b) => {
+    const c = all.find((x) => x.phone_key === b.dataset.give);
+    if (!c || !confirm(`Registrar que ${c.name} recebeu ${CONFIG.LOYALTY_REWARD}?`)) return;
+    b.disabled = true;
+    try {
+      await store.giveReward({ phone_key: c.phone_key });
+      S.customers = null;
+      toast('Brinde registrado 🎁');
+      refreshRewards();
+      render();
+    } catch (e) {
+      b.disabled = false;
+      toast(dbError(e), 'err');
+    }
+  });
+}
+
 async function viewCustomers(v, signal) {
   if (!S.customers) v.innerHTML = '<p class="hint">Carregando clientes…</p>';
   let all;
@@ -820,14 +893,15 @@ async function viewCustomers(v, signal) {
     </div>
     <section class="panel">
       <div class="table-wrap"><table class="t">
-        <thead><tr><th>Cliente</th><th>WhatsApp</th><th class="num">Pedidos</th><th class="num">Total gasto</th><th>Último pedido</th><th>Mais compra</th></tr></thead>
+        <thead><tr><th>Cliente</th><th>WhatsApp</th><th class="num">Pedidos</th><th class="num" title="Carteirinha do Formando">Capelos</th><th class="num">Total gasto</th><th>Último pedido</th><th>Mais compra</th></tr></thead>
         <tbody>${list.slice(0, 300).map((c) => `<tr>
           <td><b>${esc(c.name)}</b>${c.opted_out ? ' <span class="ch" title="Pediu para não receber promoções">sem promoções</span>' : ''}</td>
           <td><a href="${waLink('', c.phone)}" target="_blank" rel="noopener">${formatPhone(c.phone)}</a></td>
           <td class="num">${c.orders}</td>
+          <td class="num">${c.delivered === undefined ? '' : capelosText(loyaltyOf(c))}</td>
           <td class="num">${money(c.spent)}</td>
           <td title="${fmtDateTime(c.last_order)}">${timeAgo(c.last_order)}</td>
-          <td>${esc((c.top_products || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nenhum cliente encontrado.</td></tr>'}</tbody>
+          <td>${esc((c.top_products || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Nenhum cliente encontrado.</td></tr>'}</tbody>
       </table></div>
       ${list.length > 300 ? `<p class="hint">Mostrando 300 de ${list.length}. Use a busca para achar alguém.</p>` : ''}
     </section>`;

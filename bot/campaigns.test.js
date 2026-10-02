@@ -24,9 +24,9 @@ test('clientes a partir dos pedidos (igual à view admin_customers)', () => {
   ], new Set(['5511988887777']));
   assert.equal(list.length, 1, 'Bia só tem pedido cancelado: não é cliente');
   assert.deepEqual(list[0], {
-    phone_key: '5511988887777', phone: '551188887777', name: 'Ana Souza', orders: 2, spent: 64,
+    phone_key: '5511988887777', phone: '551188887777', name: 'Ana Souza', orders: 2, delivered: 2, spent: 64,
     first_order: '2026-09-01T12:00:00Z', last_order: '2026-09-20T12:00:00Z',
-    product_ids: ['p1', 'p2'], top_products: ['Brigadeiro', 'Casadinho'], opted_out: true,
+    product_ids: ['p1', 'p2'], top_products: ['Brigadeiro', 'Casadinho'], opted_out: true, rewards_given: 0,
   });
 });
 

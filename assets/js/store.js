@@ -181,7 +181,11 @@ const DemoStore = {
     return quoteCoupon(c, { code, subtotal, uses: used.length, usedByPhone: !!key && used.some((o) => phoneKey(o.phone) === key) });
   },
   async listCustomers() {
-    return customersFromOrders(read('orders', []), new Set(read('optouts', []).map((o) => o.phone_key)));
+    return customersFromOrders(read('orders', []), new Set(read('optouts', []).map((o) => o.phone_key)), read('loyalty_rewards', []));
+  },
+  // Brinde da Carteirinha do Formando entregue (order_id: o pedido em que foi junto, se houver).
+  async giveReward({ phone_key, order_id = null }) {
+    write('loyalty_rewards', [...read('loyalty_rewards', []), { id: uid(), phone_key, order_id, given_at: new Date().toISOString() }]);
   },
   async listOrders({ since } = {}) {
     const os = read('orders', []);
@@ -359,6 +363,7 @@ const SupabaseStore = {
     return must(await sb.rpc('check_coupon', { p_code: code, p_phone: phone ? normalizePhone(phone) : '', p_items: items }));
   },
   async listCustomers() { return allRows(() => sb.from('admin_customers').select('*').order('phone_key')); },
+  async giveReward({ phone_key, order_id = null }) { must(await sb.from('loyalty_rewards').insert({ phone_key, order_id })); },
   async listOrders({ since } = {}) {
     let q = sb.from('orders').select('*').order('created_at', { ascending: false }).limit(2000);
     if (since) q = q.gte('created_at', since);

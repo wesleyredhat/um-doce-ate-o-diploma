@@ -15,14 +15,16 @@ export const AUDIENCES = {
 };
 
 // Clientes a partir dos pedidos, igual à view admin_customers do banco (usado no modo demonstração).
-export function customersFromOrders(orders, optedOut = new Set()) {
+// rewards = brindes já entregues ([{ phone_key }], tabela loyalty_rewards).
+export function customersFromOrders(orders, optedOut = new Set(), rewards = []) {
   const by = new Map();
   const valid = orders.filter((o) => o.status !== 'cancelado').sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (const o of valid) {
     const k = phoneKey(o.phone);
-    const c = by.get(k) || { phone_key: k, orders: 0, spent: 0, first_order: o.created_at, qty: {}, names: {} };
+    const c = by.get(k) || { phone_key: k, orders: 0, delivered: 0, spent: 0, first_order: o.created_at, qty: {}, names: {} };
     Object.assign(c, { phone: o.phone, name: o.customer_name, last_order: o.created_at });
     c.orders += 1;
+    if (o.status === 'entregue') c.delivered += 1;
     c.spent += Number(o.total) || 0;
     for (const i of o.items) {
       c.qty[i.product_id] = (c.qty[i.product_id] || 0) + i.qty;
@@ -32,7 +34,8 @@ export function customersFromOrders(orders, optedOut = new Set()) {
   }
   return [...by.values()].map(({ qty, names, ...c }) => {
     const ids = Object.keys(qty).sort((a, b) => qty[b] - qty[a]);
-    return { ...c, spent: Math.round(c.spent * 100) / 100, product_ids: ids, top_products: ids.slice(0, 3).map((id) => names[id]), opted_out: optedOut.has(c.phone_key) };
+    return { ...c, spent: Math.round(c.spent * 100) / 100, product_ids: ids, top_products: ids.slice(0, 3).map((id) => names[id]), opted_out: optedOut.has(c.phone_key),
+      rewards_given: rewards.filter((r) => r.phone_key === c.phone_key).length };
   });
 }
 

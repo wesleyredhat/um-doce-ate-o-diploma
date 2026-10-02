@@ -111,6 +111,16 @@ create table if not exists public.optouts (
   created_at timestamptz not null default now()
 );
 
+-- Brindes da Carteirinha do Formando já entregues (um por carteirinha completa). Quem tem direito sai de
+-- admin_customers (pedidos entregues ÷ meta da carteirinha, em assets/js/loyalty.js).
+create table if not exists public.loyalty_rewards (
+  id uuid primary key default gen_random_uuid(),
+  phone_key text not null,
+  order_id uuid references public.orders (id) on delete set null,
+  given_at timestamptz not null default now()
+);
+create index if not exists loyalty_rewards_key_idx on public.loyalty_rewards (phone_key);
+
 -- Campanhas pelo WhatsApp: cada pessoa vira uma linha em campaign_sends, que o bot envia aos poucos (bot/sender.js).
 create table if not exists public.campaigns (
   id uuid primary key default gen_random_uuid(),
@@ -276,9 +286,10 @@ begin
 end $$;
 
 -- Cartão fidelidade: retorna só a contagem (não expõe pedidos).
+-- Capelos = pedidos entregues da pessoa, com e sem o 9 (phone_key), como em Clientes e nos cupons.
 create or replace function public.loyalty_stamps(p_phone text) returns int
 language sql stable security definer set search_path = public as $$
-  select count(*)::int from orders where phone = regexp_replace(p_phone, '\D', '', 'g') and status = 'entregue';
+  select count(*)::int from orders where phone_key(phone) = phone_key(p_phone) and status = 'entregue';
 $$;
 
 -- Reabrir pedido cancelado com cupom (no painel) confere de novo a cota e o "uma vez por WhatsApp":
@@ -367,6 +378,7 @@ with valid as (
     (array_agg(phone order by created_at desc))[1] as phone,
     (array_agg(customer_name order by created_at desc))[1] as name,
     count(*)::int as orders,
+    count(*) filter (where status = 'entregue')::int as delivered,
     sum(total) as spent,
     min(created_at) as first_order,
     max(created_at) as last_order
@@ -382,7 +394,9 @@ with valid as (
 select b.k as phone_key, b.phone, b.name, b.orders, b.spent, b.first_order, b.last_order,
   coalesce(p.product_ids, '{}') as product_ids,
   coalesce(p.top_products, '{}') as top_products,
-  exists (select 1 from optouts x where x.phone_key = b.k) as opted_out
+  exists (select 1 from optouts x where x.phone_key = b.k) as opted_out,
+  b.delivered,
+  (select count(*)::int from loyalty_rewards r where r.phone_key = b.k) as rewards_given
 from base b left join prods p on p.k = b.k;
 
 grant execute on function public.place_order(text, text, jsonb, text, text, text, text, date) to anon, authenticated;
@@ -410,6 +424,7 @@ alter table public.optouts enable row level security;
 alter table public.campaigns enable row level security;
 alter table public.campaign_sends enable row level security;
 alter table public.order_notices enable row level security;
+alter table public.loyalty_rewards enable row level security;
 
 drop policy if exists "admins read self" on public.admins;
 create policy "admins read self" on public.admins for select using (user_id = auth.uid());
@@ -448,6 +463,8 @@ drop policy if exists "campaigns admin" on public.campaigns;
 create policy "campaigns admin" on public.campaigns for all using (public.is_admin()) with check (public.is_admin());
 drop policy if exists "campaign_sends admin" on public.campaign_sends;
 create policy "campaign_sends admin" on public.campaign_sends for all using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "loyalty_rewards admin" on public.loyalty_rewards;
+create policy "loyalty_rewards admin" on public.loyalty_rewards for all using (public.is_admin()) with check (public.is_admin());
 drop policy if exists "order_notices admin" on public.order_notices;
 create policy "order_notices admin" on public.order_notices for all using (public.is_admin()) with check (public.is_admin());
 

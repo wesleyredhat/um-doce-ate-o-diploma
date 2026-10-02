@@ -94,9 +94,10 @@ A alternativa oficial (WhatsApp Business Cloud API, paga por conversa) continua 
 
 ## 5. Clientes, campanhas e cupons
 
-Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode os testes `supabase/tests/cupons.sql`, `avisos.sql` e `entrega.sql`, que conferem as regras do cupom, dos avisos e da entrega direto no banco: todos precisam terminar sem erro e desfazem tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
+Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode os testes `supabase/tests/cupons.sql`, `avisos.sql`, `entrega.sql` e `fidelidade.sql`, que conferem as regras do cupom, dos avisos, da entrega e da carteirinha direto no banco: todos precisam terminar sem erro e desfazem tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
 
-- **Clientes** (painel): todo mundo que já comprou, agrupado pelo WhatsApp (com e sem o 9 é a mesma pessoa), com número de pedidos, total gasto, último pedido e o que mais compra.
+- **Clientes** (painel): todo mundo que já comprou, agrupado pelo WhatsApp (com e sem o 9 é a mesma pessoa), com número de pedidos, capelos da carteirinha, total gasto, último pedido e o que mais compra.
+- **Fidelidade** (painel): Carteirinha do Formando (cada pedido entregue vale 1 capelo; a cada 10, o brinde de `LOYALTY_REWARD`). Lista quem tem **brinde a entregar** (com "Entreguei o brinde") e quem está **quase lá** (faltam 3 ou menos), com mensagem pronta no WhatsApp. O cartão do pedido de quem tem brinde mostra 🎁, e ao marcar Entregue o painel pergunta se o brinde foi junto.
 - **Cupons**: desconto em % ou em R$, pedido mínimo, vigência por data (dia inteiro, horário de Brasília) e cota de usos. Cada WhatsApp usa uma vez, e pedido cancelado devolve o uso. Vale no site (o link `?cupom=CODIGO` já aplica) e no bot ("cupom CODIGO"). Prefira código com número, como VOLTA10.
 - **Campanhas**: escolha o público (todos, sumidos, quem comprou um produto, quem fez 3 pedidos ou mais, os 20 que mais gastaram ou os inscritos nas novidades), escreva a mensagem com `{nome}` e, se quiser, um cupom. O bot envia aos poucos: uma mensagem a cada 20 a 60 s, só no horário configurado e até o limite do dia (padrão: 80 por dia, das 9h às 20h). Quem responde "parar promoções" ou "parar novidades" não recebe mais campanhas nem novidades.
 - **Risco**: mesmo nesse ritmo, disparo em massa pelo WhatsApp comum pode levar ao bloqueio do número. Comece com campanhas pequenas, para quem já conversou com a loja.
@@ -108,7 +109,7 @@ index.html  admin.html  manifest.webmanifest  favicon.png  .nojekyll
 assets/
   css/  base.css (tokens da paleta)  shop.css  admin.css
   js/   config.js  store.js (demo | supabase)  shop.js  admin.js  charts.js  icons.js  utils.js
-        coupons.js (regras do cupom)  campaigns.js (público, texto e ritmo das campanhas)
+        coupons.js (regras do cupom)  campaigns.js (público, texto e ritmo das campanhas)  loyalty.js (carteirinha)
   img/  fotos dos produtos e logo (recortadas da arte da cliente)
 bot/
   index.js (WhatsApp por QR Code)  core.js (quando o bot fala)  sender.js (envio das campanhas)
@@ -118,6 +119,7 @@ supabase/
   tests/cupons.sql                    testes das regras do cupom no banco
   tests/avisos.sql                    testes dos avisos do pedido (Pix, pronto)
   tests/entrega.sql                   testes da forma de entrega no place_order
+  tests/fidelidade.sql                testes da Carteirinha do Formando
   functions/_shared/delivery.js       forma de entrega (site, bot e painel)
   functions/_shared/pix.js            Pix Copia e Cola (BR Code)
   functions/_shared/bot-engine.js     motor de conversa (navegador + Deno)
