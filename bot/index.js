@@ -14,6 +14,8 @@ import qrcodeTerminal from 'qrcode-terminal';
 import pino from 'pino';
 import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engine.js';
 import { createCore, PAUSE_TTL_MS } from './core.js';
+import { createSender } from './sender.js';
+import { phoneKey } from '../assets/js/coupons.js';
 
 process.umask(0o077); // sessão do WhatsApp, log e trava só legíveis pelo próprio usuário
 
@@ -26,6 +28,7 @@ const SITE_URL = env('SITE_URL');
 const OWNER_PHONE = env('OWNER_PHONE').replace(/\D/g, '');
 const AUTH_DIR = new URL('./auth', import.meta.url).pathname;
 const TICK_MS = 30_000;
+const CAMPAIGN_TICK_MS = 5_000; // o ritmo de verdade (20 a 60 s entre mensagens) fica em sender.js
 const LOCK = new URL('./bot.pid', import.meta.url).pathname;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -89,13 +92,29 @@ const ctx = {
   // Compara sem o 9 extra: o painel grava 55 11 9xxxx-xxxx, o WhatsApp às vezes usa o número antigo.
   isAdmin: async (phone) => ((await db.from('bot_admins').select('*')).data ?? []).find((a) => samePhone(a.phone, phone)) || null,
   listNews: async () => (await db.from('news').select('*').eq('published', true).order('created_at', { ascending: false }).limit(3)).data ?? [],
+  // "parar novidades/promoções" vale para tudo: sai dos inscritos e entra na lista de quem não quer receber.
+  // Devolve false quando a pessoa nem era inscrita nem recebeu campanha: o motor fica quieto (pode ser só conversa).
   subscribe: async (phone, name, on) => {
-    if (on) return void (await db.from('subscribers').upsert({ phone, name }));
+    const key = phoneKey(phone);
+    if (on) {
+      await db.from('subscribers').upsert({ phone, name });
+      await db.from('optouts').delete().eq('phone_key', key);
+      return;
+    }
     const { data } = await db.from('subscribers').delete().eq('phone', phone).select('phone');
-    return !!data?.length; // false: a pessoa nem estava inscrita
+    const { count } = await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('phone_key', key).eq('status', 'enviada');
+    await db.from('optouts').upsert({ phone_key: key, phone });
+    return !!data?.length || count > 0;
+  },
+  checkCoupon: async (code, phone, items) => {
+    const { data, error } = await db.rpc('check_coupon', { p_code: code, p_phone: phone, p_items: items });
+    if (error) throw new Error(error.message);
+    return data;
   },
   placeOrder: async (o) => {
-    const { data, error } = await db.rpc('place_order', { p_name: o.customer_name, p_phone: o.phone, p_items: o.items, p_channel: o.channel, p_notes: '' });
+    const { data, error } = await db.rpc('place_order', {
+      p_name: o.customer_name, p_phone: o.phone, p_items: o.items, p_channel: o.channel, p_notes: '', p_coupon: o.coupon ?? null,
+    });
     if (error) throw new Error(error.message);
     return data;
   },
@@ -128,6 +147,58 @@ const sessions = {
   },
 };
 const core = createCore({ ctx, sessions });
+
+// Fila das campanhas (tabelas campaigns e campaign_sends). Ritmo e regras ficam em sender.js.
+const must = ({ data, error, count }) => {
+  if (error) throw new Error(error.message);
+  return count ?? data;
+};
+const campaignDb = {
+  settings: async () => must(await db.from('settings').select('value').eq('key', 'campaigns').maybeSingle())?.value ?? {},
+  requeueStale: async (before) => must(await db.from('campaign_sends').update({ status: 'pendente' }).eq('status', 'enviando').lt('claimed_at', before)),
+  sentSince: async (since) => must(await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('status', 'enviada').gte('sent_at', since)) || 0,
+  nextCampaign: async () => {
+    const c = must(await db.from('campaigns').select('id, name, body, coupons(code)').eq('status', 'enviando').order('created_at').limit(1).maybeSingle());
+    return c && { ...c, coupon_code: c.coupons?.code || null };
+  },
+  // Pega o próximo da fila marcando "enviando" só se ainda estiver pendente.
+  claim: async (campaignId, now) => {
+    for (let i = 0; i < 3; i++) {
+      const next = must(await db.from('campaign_sends').select('id').eq('campaign_id', campaignId).eq('status', 'pendente').order('id').limit(1).maybeSingle());
+      if (!next) return null;
+      const row = must(await db.from('campaign_sends').update({ status: 'enviando', claimed_at: now }).eq('id', next.id).eq('status', 'pendente').select().maybeSingle());
+      if (row) return row;
+    }
+    return null;
+  },
+  isOptedOut: async (key) => !!must(await db.from('optouts').select('phone_key').eq('phone_key', key).maybeSingle()),
+  mark: async (id, patch) => must(await db.from('campaign_sends').update(patch).eq('id', id)),
+  pause: async (id, reason) => must(await db.from('campaigns').update({ status: 'pausada', pause_reason: reason }).eq('id', id)),
+  finish: async (id) => {
+    const open = must(await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('campaign_id', id).in('status', ['pendente', 'enviando']));
+    if (open) return false;
+    must(await db.from('campaigns').update({ status: 'concluida', finished_at: new Date().toISOString() }).eq('id', id).eq('status', 'enviando'));
+    return true;
+  },
+};
+const sender = createSender({
+  db: campaignDb,
+  siteUrl: SITE_URL,
+  log,
+  wa: {
+    online: () => online,
+    // O WhatsApp devolve o endereço certo (com ou sem o 9); null = número sem WhatsApp.
+    lookup: async (phone) => {
+      try {
+        const [r] = (await sock.onWhatsApp(toJid(phone))) || [];
+        return r?.exists ? r.jid : null;
+      } catch {
+        return toJid(phone);
+      }
+    },
+    send: (jid, text) => sendText(jid, text),
+  },
+});
 
 // Novidades publicadas com o canal WhatsApp (no painel ou por #novidade) ficam pendentes até o bot enviar.
 const NEWS_SQL = 'alter table public.news add column if not exists wa_sent_at timestamptz;';
@@ -302,3 +373,4 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 await setStatus({ state: 'iniciando', qr: null });
 await start();
 setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);
+setInterval(() => sender.tick().catch((e) => console.error('erro no envio de campanhas', e.message)), CAMPAIGN_TICK_MS);
