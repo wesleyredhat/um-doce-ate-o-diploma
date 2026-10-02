@@ -4,6 +4,8 @@
 //   - SupabaseStore: Postgres + Auth + RLS (produção)
 import { CONFIG, IS_DEMO } from './config.js';
 import { uid, orderCode, normalizePhone, sha256 } from './utils.js';
+import { quoteCoupon, phoneKey, normCode } from './coupons.js';
+import { customersFromOrders } from './campaigns.js';
 
 export const STATUSES = [
   { id: 'novo', label: 'Novo', color: 'var(--berry)' },
@@ -97,6 +99,10 @@ function seedDemo() {
     bot_greeting: 'Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma.',
   });
   write('subscribers', []);
+  write('coupons', [{ id: uid(), code: 'VOLTA10', kind: 'percent', value: 10, min_order: 0, starts_on: null, ends_on: null, max_uses: 50, active: true, created_at: new Date(now).toISOString() }]);
+  write('optouts', []);
+  write('campaigns', []);
+  write('campaign_sends', []);
   write('seeded', true);
 }
 
@@ -105,7 +111,7 @@ function buildOrder({ customer_name, phone, items, channel = 'web', status = 'no
   const cost_total = items.reduce((s, it) => s + it.qty * it.unit_cost, 0);
   const ts = created_at || new Date().toISOString();
   return { id: uid(), code: orderCode(), customer_name, phone: normalizePhone(phone), items, total, cost_total, channel, status, notes,
-    created_at: ts, updated_at: ts };
+    created_at: ts, updated_at: ts, coupon_code: null, discount: 0 };
 }
 
 const DemoStore = {
@@ -138,7 +144,7 @@ const DemoStore = {
   },
   async deleteProduct(id) { write('products', read('products', []).filter((p) => p.id !== id)); },
 
-  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '' }) {
+  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null }) {
     const products = read('products', []);
     const lines = items.map(({ product_id, qty }) => {
       const p = products.find((x) => x.id === product_id && x.active);
@@ -147,8 +153,28 @@ const DemoStore = {
     });
     if (!lines.length) throw new Error('Escolha ao menos um produto');
     const order = buildOrder({ customer_name: customer_name.trim(), phone, items: lines, channel, notes });
+    const subtotal = order.total;
+    if (normCode(coupon)) {
+      const q = await this.checkCoupon(coupon, phone, items);
+      if (!q.valid) throw new Error(q.message);
+      Object.assign(order, { coupon_code: q.code, discount: q.discount, total: q.total });
+    }
     write('orders', [order, ...read('orders', [])]);
-    return { code: order.code, total: order.total };
+    return { code: order.code, total: order.total, subtotal, discount: order.discount, coupon: order.coupon_code };
+  },
+  async checkCoupon(code, phone = '', items = []) {
+    const c = read('coupons', []).find((x) => x.code === normCode(code));
+    const products = read('products', []);
+    const subtotal = items.reduce((s, i) => {
+      const p = products.find((x) => x.id === i.product_id && x.active);
+      return s + (p ? Math.max(1, Math.min(500, Math.floor(i.qty))) * p.price : 0);
+    }, 0);
+    const used = c ? read('orders', []).filter((o) => o.coupon_code === c.code && o.status !== 'cancelado') : [];
+    const key = phoneKey(phone);
+    return quoteCoupon(c, { code, subtotal, uses: used.length, usedByPhone: !!key && used.some((o) => phoneKey(o.phone) === key) });
+  },
+  async listCustomers() {
+    return customersFromOrders(read('orders', []), new Set(read('optouts', []).map((o) => o.phone_key)));
   },
   async listOrders({ since } = {}) {
     const os = read('orders', []);
@@ -202,9 +228,13 @@ const DemoStore = {
     write('bot_sessions', all);
   },
   async subscribe(phone, name, on = true) {
+    const key = phoneKey(phone);
     const subs = read('subscribers', []).filter((s) => s.phone !== phone);
+    const outs = read('optouts', []).filter((o) => o.phone_key !== key);
     if (on) subs.push({ phone, name, created_at: new Date().toISOString() });
+    else outs.push({ phone_key: key, phone, created_at: new Date().toISOString() });
     write('subscribers', subs);
+    write('optouts', outs);
   },
   async listSubscribers() { return read('subscribers', []); },
 
@@ -213,6 +243,41 @@ const DemoStore = {
   async broadcast() {
     return { sent: 0, demo: true };
   },
+
+  async listCoupons() { return read('coupons', []).sort((a, b) => b.created_at.localeCompare(a.created_at)); },
+  async saveCoupon(c) {
+    const cs = read('coupons', []);
+    const { id, ...rec } = 'code' in c ? { ...c, code: normCode(c.code) } : c;
+    if (rec.code && cs.some((x) => x.code === rec.code && x.id !== id)) throw new Error('Já existe um cupom com esse código');
+    const i = cs.findIndex((x) => x.id === id);
+    if (i >= 0) cs[i] = { ...cs[i], ...rec };
+    else cs.push({ id: uid(), kind: 'percent', min_order: 0, starts_on: null, ends_on: null, max_uses: null, active: true, created_at: new Date().toISOString(), ...rec });
+    write('coupons', cs);
+  },
+
+  async listCampaigns() {
+    const sends = read('campaign_sends', []);
+    const coupons = read('coupons', []);
+    return read('campaigns', []).map((c) => ({ ...c, coupon_code: coupons.find((x) => x.id === c.coupon_id)?.code || null, sends: sends.filter((s) => s.campaign_id === c.id) }));
+  },
+  // Modo demonstração: nada é enviado de verdade, então a campanha já nasce concluída.
+  async createCampaign({ name, body, coupon_id = null, audience, recipients }) {
+    const outs = new Set(read('optouts', []).map((o) => o.phone_key));
+    const now = new Date().toISOString();
+    const c = { id: uid(), name, body, coupon_id, audience, status: 'concluida', pause_reason: null, created_at: now, finished_at: now };
+    const sends = recipients.map((r) => ({
+      id: uid(), campaign_id: c.id, phone: r.phone, phone_key: phoneKey(r.phone), name: r.name || '',
+      status: outs.has(phoneKey(r.phone)) ? 'pulada' : 'enviada', error: null, claimed_at: now, sent_at: now,
+    }));
+    write('campaigns', [c, ...read('campaigns', [])]);
+    write('campaign_sends', [...read('campaign_sends', []), ...sends]);
+    return c;
+  },
+  async setCampaignStatus(id, status) {
+    write('campaigns', read('campaigns', []).map((c) => (c.id === id ? { ...c, status, pause_reason: null } : c)));
+  },
+  async getCampaignSettings() { return read('campaign_settings', {}); },
+  async saveCampaignSettings(s) { write('campaign_settings', { ...read('campaign_settings', {}), ...s }); },
 
   resetDemo() {
     Object.keys(localStorage).filter((k) => k.startsWith(LS)).forEach((k) => localStorage.removeItem(k));
@@ -260,10 +325,22 @@ const SupabaseStore = {
   },
   async deleteProduct(id) { must(await sb.from('products').delete().eq('id', id)); },
 
-  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '' }) {
+  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null }) {
     return must(await sb.rpc('place_order', {
-      p_name: customer_name, p_phone: normalizePhone(phone), p_items: items, p_channel: channel, p_notes: notes,
+      p_name: customer_name, p_phone: normalizePhone(phone), p_items: items, p_channel: channel, p_notes: notes, p_coupon: normCode(coupon) || null,
     }));
+  },
+  async checkCoupon(code, phone = '', items = []) {
+    return must(await sb.rpc('check_coupon', { p_code: code, p_phone: phone ? normalizePhone(phone) : '', p_items: items }));
+  },
+  // A API devolve no máximo 1000 linhas por vez.
+  async listCustomers() {
+    const out = [];
+    for (let from = 0; ; from += 1000) {
+      const page = must(await sb.from('admin_customers').select('*').order('phone_key').range(from, from + 999));
+      out.push(...page);
+      if (page.length < 1000) return out;
+    }
   },
   async listOrders({ since } = {}) {
     let q = sb.from('orders').select('*').order('created_at', { ascending: false }).limit(2000);
@@ -306,6 +383,39 @@ const SupabaseStore = {
   async saveBotSession(phone, data) { if (data) this._sessions[phone] = data; else delete this._sessions[phone]; },
   async subscribe() {},
   async listSubscribers() { return must(await sb.from('subscribers').select('*')); },
+
+  async listCoupons() { return must(await sb.from('coupons').select('*').order('created_at', { ascending: false })); },
+  async saveCoupon(c) {
+    const { id, ...rec } = 'code' in c ? { ...c, code: normCode(c.code) } : c;
+    const { error } = await (id ? sb.from('coupons').update(rec).eq('id', id) : sb.from('coupons').insert(rec));
+    if (error) throw new Error(error.code === '23505' ? 'Já existe um cupom com esse código' : error.message);
+  },
+
+  async listCampaigns() {
+    const rows = must(await sb.from('campaigns').select('*, coupons(code), campaign_sends(id, phone, name, status, error, sent_at)')
+      .order('created_at', { ascending: false }).limit(50));
+    return rows.map(({ coupons, campaign_sends, ...c }) => ({ ...c, coupon_code: coupons?.code || null, sends: campaign_sends || [] }));
+  },
+  // Nasce pausada e só vai para "enviando" com a lista inteira gravada: o bot nunca pega uma campanha pela metade.
+  async createCampaign({ name, body, coupon_id = null, audience, recipients }) {
+    const c = must(await sb.from('campaigns').insert({ name, body, coupon_id, audience, status: 'pausada' }).select().single());
+    const rows = recipients.map((r) => ({ campaign_id: c.id, phone: r.phone, phone_key: phoneKey(r.phone), name: r.name || '' }));
+    const { error } = await sb.from('campaign_sends').insert(rows);
+    if (error) {
+      await sb.from('campaigns').delete().eq('id', c.id);
+      throw new Error(error.message);
+    }
+    must(await sb.from('campaigns').update({ status: 'enviando' }).eq('id', c.id));
+    return c;
+  },
+  async setCampaignStatus(id, status) { must(await sb.from('campaigns').update({ status, pause_reason: null }).eq('id', id)); },
+  async getCampaignSettings() {
+    const row = must(await sb.from('settings').select('value').eq('key', 'campaigns').maybeSingle());
+    return row?.value ?? {};
+  },
+  async saveCampaignSettings(s) {
+    must(await sb.from('settings').upsert({ key: 'campaigns', value: { ...(await this.getCampaignSettings()), ...s } }));
+  },
 
   // Bot por QR Code (pasta bot/): ele busca sozinho as novidades com canal WhatsApp ainda não enviadas.
   async botStatus() {
