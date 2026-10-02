@@ -59,17 +59,27 @@ export function pixCode({ key, type = '', name, city, amount = 0, txid = '' }) {
   return payload + crc16(payload);
 }
 
-// Tipos do cartão Pix do WhatsApp (payment_info / pix_static_code).
-const WA_KEY_TYPES = { celular: 'PHONE', cpf: 'CPF', cnpj: 'CNPJ', email: 'EMAIL', aleatoria: 'EVP' };
+// Chave para ler na mensagem: "celular +55 11 94177-6869", "CPF 529.982.247-25", "e-mail loja@doce.com".
+export function pixKeyLabel(raw, type = '') {
+  const t = type || pixKeyType(raw);
+  const k = pixKey(raw, t);
+  if (t === 'celular') {
+    const d = k.startsWith('+55') ? k.slice(3) : k.slice(1);
+    return `celular +55 ${d.slice(0, 2)} ${d.slice(2, -4)}-${d.slice(-4)}`;
+  }
+  if (t === 'cpf') return `CPF ${k.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')}`;
+  if (t === 'cnpj') return `CNPJ ${k.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}`;
+  return `${PIX_TYPES[t].toLowerCase()} ${k}`;
+}
 
 // Pix do pedido com os Ajustes da loja (settings.store): chave, tipo e, se preenchidos, nome e cidade de quem recebe.
-// card = dados do cartão nativo do WhatsApp (nome, chave e botão "Copiar chave Pix"). null sem chave cadastrada.
+// null sem chave cadastrada.
 export function orderPix(store, o) {
   if (!String(store?.pix_key || '').trim()) return null;
   const type = store.pix_key_type || pixKeyType(store.pix_key);
   return {
     key: pixKey(store.pix_key, type),
-    card: { merchant_name: store.pix_name || 'Um Doce Até o Diploma', key: pixKey(store.pix_key, type), key_type: WA_KEY_TYPES[type] },
+    label: pixKeyLabel(store.pix_key, type),
     code: pixCode({
       key: store.pix_key, type: store.pix_key_type, name: store.pix_name || 'Um Doce Ate o Diploma', city: store.pix_city || 'Sao Paulo',
       amount: o.total, txid: o.code,

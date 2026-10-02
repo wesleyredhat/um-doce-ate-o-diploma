@@ -62,7 +62,7 @@ Cliente: 1
 Bot:     Como prefere receber? 1 Na faculdade, em dia de aula (→ próximas 4 datas: seg, ter, qua, sex) · 2 Outro local ou retirada
 Bot:     resumo com 📍 Entrega → 1 Confirmar
 Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · vou conferir a agenda e confirmo com a chave Pix
-Painel:  Confirmar → Bot: pedido confirmado (itens, total, entrega) + cartão Pix "Copiar chave Pix" + Pix Copia e Cola com o valor
+Painel:  Confirmar → Bot: pedido confirmado (itens, total, entrega, chave legível) + (2ª mensagem) só o Pix Copia e Cola com o valor
 Painel:  Pronto    → Bot: prontinho; no ponto, o lugar e o dia; senão a observação do pedido ou "vamos combinar"
 ```
 

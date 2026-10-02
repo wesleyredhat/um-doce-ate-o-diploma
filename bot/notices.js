@@ -1,6 +1,6 @@
 // Avisos automáticos do pedido pelo WhatsApp. Um gatilho do banco (orders_notice, em supabase/schema.sql)
 // cria o aviso quando o status muda na esteira do painel:
-//   - confirmado: confirmação com itens e total, o cartão Pix do WhatsApp (botão "Copiar chave Pix") e o Pix Copia e Cola (já com o valor);
+//   - confirmado: confirmação com itens e total e, numa segunda mensagem, só o Pix Copia e Cola (já com o valor);
 //   - pronto: pedido disponível para entrega (na entrega com dia marcado, o lugar e o dia).
 // Aviso de pedido que voltou atrás espera; de pedido cancelado (ou "pronto" já entregue) e com mais de 1 dia, pula.
 // Sem Baileys nem Supabase aqui: index.js liga isso ao WhatsApp e notices.test.js testa com dados falsos.
@@ -30,10 +30,10 @@ export function noticeTexts(kind, o, store = {}) {
   const head = `Oi, ${first}! Seu pedido *${o.code}* está confirmado ✅\n${items}\nTotal: *${brl(o.total)}*${off}${where}`;
   const pix = orderPix(store, o);
   if (!pix) return [`${head}\n\nJá já combinamos o pagamento por aqui 💛`];
-  // O cartão não é oficial no WhatsApp comum e pode não aparecer em algum celular: o Copia e Cola vem logo depois.
+  // O código vai sozinho na mensagem seguinte: um toque longo copia só ele. (O cartão Pix do WhatsApp Business
+  // não aparece quando enviado pelo WhatsApp comum, nem no celular: testado em 02/10/2026.)
   return [
-    `${head}\n\n💸 Para pagar, toque em *Copiar chave Pix* aqui embaixo e faça um Pix de *${brl(o.total)}*, ou copie o código *Pix Copia e Cola* da última mensagem, que já vai com o valor. Depois me manda o comprovante por aqui 💛`,
-    { pixCard: pix.card },
+    `${head}\n\n💸 *Pagamento por Pix*\nCopie o código da próxima mensagem e cole no app do banco em *Pix Copia e Cola*: já vai com o valor certinho.\n_Se preferir, a chave é ${pix.label}_\n\nDepois é só mandar o comprovante por aqui 💛`,
     pix.code,
   ];
 }

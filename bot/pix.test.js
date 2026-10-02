@@ -1,7 +1,7 @@
 // npm test: Pix Copia e Cola (BR Code).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pixCode, pixKey, pixKeyType } from '../supabase/functions/_shared/pix.js';
+import { pixCode, pixKey, pixKeyLabel, pixKeyType } from '../supabase/functions/_shared/pix.js';
 
 test('exemplo do manual do BR Code (Banco Central) sai igual, com o mesmo CRC', () => {
   assert.equal(
@@ -31,4 +31,12 @@ test('tipo e formato da chave', () => {
   assert.equal(pixKey('529.982.247-25'), '52998224725');
   assert.equal(pixKey('52998224725', 'celular'), '+5552998224725', 'Ajustes pode fixar o tipo');
   assert.equal(pixKey(' Loja@Doce.com '), 'loja@doce.com');
+});
+
+test('chave para ler na mensagem', () => {
+  assert.equal(pixKeyLabel('11941776869'), 'celular +55 11 94177-6869');
+  assert.equal(pixKeyLabel('+55 11 4177-6869', 'celular'), 'celular +55 11 4177-6869');
+  assert.equal(pixKeyLabel('52998224725'), 'CPF 529.982.247-25');
+  assert.equal(pixKeyLabel('11222333000181'), 'CNPJ 11.222.333/0001-81');
+  assert.equal(pixKeyLabel('Loja@Doce.com'), 'e-mail loja@doce.com');
 });
