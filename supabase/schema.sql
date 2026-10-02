@@ -100,7 +100,8 @@ create trigger orders_touch before update on public.orders for each row execute 
 create or replace function public.place_order(
   p_name text, p_phone text, p_items jsonb, p_channel text default 'web', p_notes text default ''
 ) returns json
-language plpgsql security definer set search_path = public as $$
+-- "extensions": no Supabase o pgcrypto (gen_random_bytes, usado no código do pedido) fica nesse esquema.
+language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_items jsonb := '[]'::jsonb;
   v_total numeric := 0;
