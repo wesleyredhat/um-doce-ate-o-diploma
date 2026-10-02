@@ -210,7 +210,8 @@ _Dica: pode mandar direto, tipo "quero 10 brigadeiros e 2 empadinhas"._`;
 
 function catalogText(products) {
   const groups = {};
-  products.forEach((p, i) => (groups[p.category] ||= []).push(`*${i + 1}* ${p.name}: ${brl(p.price)}`));
+  // "5 - Empadinha": sem o traço, o número da opção parece a quantidade ("5 empadinhas").
+  products.forEach((p, i) => (groups[p.category] ||= []).push(`*${i + 1}* - ${p.name}: ${brl(p.price)}`));
   return Object.entries(groups)
     .map(([cat, lines]) => `*${cat === 'salgados' ? '🥧 Salgados' : '🍫 Doces'}*\n${lines.join('\n')}`)
     .join('\n\n');
