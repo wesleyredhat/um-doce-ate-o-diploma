@@ -85,6 +85,15 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 
 A alternativa oficial (WhatsApp Business Cloud API, paga por conversa) continua em `supabase/functions/whatsapp-bot`; para usá-la, preencha `BOT_FUNCTION_URL` em `config.js`.
 
+## 5. Clientes, campanhas e cupons
+
+Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode o `supabase/tests/cupons.sql`, que confere as regras do cupom direto no banco: ele precisa terminar sem erro e desfaz tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
+
+- **Clientes** (painel): todo mundo que já comprou, agrupado pelo WhatsApp (com e sem o 9 é a mesma pessoa), com número de pedidos, total gasto, último pedido e o que mais compra.
+- **Cupons**: desconto em % ou em R$, pedido mínimo, vigência por data (dia inteiro, horário de Brasília) e cota de usos. Cada WhatsApp usa uma vez, e pedido cancelado devolve o uso. Vale no site (o link `?cupom=CODIGO` já aplica) e no bot ("cupom CODIGO"). Prefira código com número, como VOLTA10.
+- **Campanhas**: escolha o público (todos, sumidos, quem comprou um produto, quem fez 3 pedidos ou mais, os 20 que mais gastaram ou os inscritos nas novidades), escreva a mensagem com `{nome}` e, se quiser, um cupom. O bot envia aos poucos: uma mensagem a cada 20 a 60 s, só no horário configurado e até o limite do dia (padrão: 80 por dia, das 9h às 20h). Quem responde "parar promoções" ou "parar novidades" não recebe mais campanhas nem novidades.
+- **Risco**: mesmo nesse ritmo, disparo em massa pelo WhatsApp comum pode levar ao bloqueio do número. Comece com campanhas pequenas, para quem já conversou com a loja.
+
 ## Estrutura
 
 ```
@@ -92,10 +101,14 @@ index.html  admin.html  manifest.webmanifest  favicon.png  .nojekyll
 assets/
   css/  base.css (tokens da paleta)  shop.css  admin.css
   js/   config.js  store.js (demo | supabase)  shop.js  admin.js  charts.js  icons.js  utils.js
+        coupons.js (regras do cupom)  campaigns.js (público, texto e ritmo das campanhas)
   img/  fotos dos produtos e logo (recortadas da arte da cliente)
+bot/
+  index.js (WhatsApp por QR Code)  core.js (quando o bot fala)  sender.js (envio das campanhas)  *.test.js
 supabase/
   schema.sql
+  tests/cupons.sql                    testes das regras do cupom no banco
   functions/_shared/bot-engine.js     motor de conversa (navegador + Deno)
   functions/whatsapp-bot/index.ts     webhook + envio de novidades
-docs/ESPECIFICACAO.md
+docs/ESPECIFICACAO.md  docs/plans/ (desenho e plano de clientes, campanhas e cupons)
 ```

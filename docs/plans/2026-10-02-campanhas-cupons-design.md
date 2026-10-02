@@ -1,6 +1,6 @@
 # Clientes, campanhas e cupons: desenho
 
-Data: 2026-10-02 · Situação: aprovado, ainda não implementado. A aplicação ainda não está em produção, então não há preocupação com compatibilidade de versões antigas.
+Data: 2026-10-02 · Situação: implementado (passo a passo em [2026-10-02-campanhas-cupons.md](2026-10-02-campanhas-cupons.md)). A aplicação ainda não está em produção, então não há preocupação com compatibilidade de versões antigas.
 
 ## Objetivo
 

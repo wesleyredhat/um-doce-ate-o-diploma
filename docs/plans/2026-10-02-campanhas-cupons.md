@@ -2601,3 +2601,10 @@ git commit -m "Documentação de clientes, campanhas e cupons"
 2. No Mac do bot: `cd bot && npm install && ./instalar-servico-mac.sh` (reinicia o serviço com o código novo). No log (`bot/bot.log`) não pode aparecer "erro no envio de campanhas".
 3. Teste real pequeno: um cupom de teste, uma campanha para "Inscritos nas novidades" com só o próprio número marcado, conferir a mensagem no celular, responder "cupom CODIGO" e "parar promoções".
 4. Juntar a branch na `main` e fazer push (o GitHub Pages publica o site), só com o ok da pessoa.
+
+---
+
+## Ajustes feitos na implementação
+
+- **Funciona antes do SQL novo.** Pedido sem cupom chama `place_order` sem o `p_coupon` (no site e no bot), então loja e bot seguem recebendo pedidos enquanto o banco não é atualizado. O painel abre mesmo sem as tabelas novas, e as abas Clientes, Cupons e Campanhas explicam que falta rodar o `schema.sql`. No bot, erro no envio de campanhas espera 1 min antes da próxima tentativa e aparece no log no máximo a cada 10 min.
+- **SQL testado num PostgreSQL 16 local**, com papéis e esquema `auth` iguais aos do Supabase: o `schema.sql` roda duas vezes seguidas sem erro, o `supabase/tests/cupons.sql` passa, e as regras de acesso (anônimo, logado sem ser admin e administradora) se comportam como descrito no desenho.

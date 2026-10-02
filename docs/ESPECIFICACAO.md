@@ -44,6 +44,7 @@ Decisões:
 4. **Enviar pedido** → `place_order()` recalcula preços no servidor e devolve o código `DD-XXXX`.
 5. Tela de sucesso com chuva de capelos, código do pedido e botão **Enviar resumo no WhatsApp** (mensagem pronta para a loja).
 6. Nome e telefone ficam guardados no aparelho para a próxima compra; o carrinho sobrevive a recarregamento.
+7. **Cupom** (opcional): campo **Tem cupom?** ou link com `?cupom=CODIGO`. O desconto e o novo total aparecem antes de enviar (`check_coupon()`), e `place_order()` confere tudo de novo no servidor.
 
 Sem cadastro, sem senha, sem pagamento online: o padrão do mercado para confeitarias pequenas é confirmar e cobrar via Pix no WhatsApp, e cada etapa a mais derruba a conversão.
 
@@ -61,7 +62,8 @@ Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · Pix: …
 - **Atalho em linguagem natural**: “quero 10 brigadeiros e 2 empadinhas”, “uma dúzia de casadinhos” → o bot monta o carrinho e pula direto para o nome.
 - **Comandos globais**: `menu`, `oi`, `cancelar`.
 - **Atendimento humano** (opção 5): bot fica em silêncio e avisa a dona (`OWNER_PHONE`) até o cliente mandar `menu`.
-- **Inscrição em novidades** (opção 4) com saída por “parar novidades” (exigência de opt-in da Meta).
+- **Inscrição em novidades** (opção 4) com saída por “parar novidades” ou “parar promoções” (exigência de opt-in da Meta). Quem sai também deixa de receber campanhas.
+- **Cupom**: “cupom VOLTA10” em qualquer momento, ou só o código no meio da conversa, anota o cupom; o resumo mostra o desconto e o total final. Se o cupom deixar de valer na confirmação, o bot explica e oferece seguir sem ele.
 
 ### 2.3 Grupo
 
@@ -85,6 +87,9 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 3. **Pedidos**: quadro Novo → Confirmado → Em produção → Pronto → Entregue (arrastar ou botão de avançar). Busca, filtro por canal, botão de WhatsApp com **mensagem pronta para cada status** (confirmação com Pix, “está no forno”, “prontinho”, agradecimento com contagem da carteirinha). Atualiza a cada 30 s com aviso sonoro e contador na aba do navegador.
 4. **Produção**: soma de unidades por produto dos pedidos não prontos, com detalhamento por pedido e impressão.
 5. **Novo pedido**: lançamento manual (balcão, telefone, Instagram).
+6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.
+7. **Cupons**: % ou R$, pedido mínimo, vigência por data, cota de usos, uma vez por WhatsApp; mostra usos, vendas e desconto dado.
+8. **Campanhas**: público por filtro (todos, sumidos, por produto, fiéis, top 20, inscritos), mensagem com `{nome}` e cupom opcional, prévia, estimativa de término e progresso. O bot envia uma mensagem a cada 20 a 60 s, no horário e no limite diário configurados.
 
 ## 3. Estrutura de dados
 
@@ -99,11 +104,17 @@ admins      (user_id → auth.users, name)
 bot_admins  (id, phone, name, can_post, can_manage_orders)
 subscribers (phone, name, created_at)
 bot_sessions(phone, data jsonb, updated_at)
+coupons     (id, code, kind[percent|fixed], value, min_order, starts_on, ends_on, max_uses, active, created_at)
+optouts     (phone_key, phone, created_at)              quem pediu para não receber campanhas nem novidades
+campaigns   (id, name, body, coupon_id, audience jsonb, status[enviando|pausada|concluida|cancelada], pause_reason, created_at, finished_at)
+campaign_sends (id, campaign_id, phone, phone_key, name, status[pendente|enviando|enviada|falhou|pulada], error, claimed_at, sent_at)
+             orders também guarda coupon_code e discount (total = subtotal − desconto)
+view admin_customers  quem comprou, agrupado por phone_key (só admin)
 ```
 
 - **Snapshot de preço e custo no item**: mudar o preço amanhã não altera o lucro de ontem.
 - **Telefone normalizado** `55DDDNÚMERO` em todo lugar (pedidos, bot, fidelidade, links `wa.me`).
-- **Segurança (RLS)**: público lê produtos ativos, novidades publicadas e `settings.store`; cria pedido apenas via `place_order()` (valida canal, quantidade de 1 a 500, até 20 itens, produto ativo, loja aberta); `loyalty_stamps()` devolve só um número. Todo o resto exige `is_admin()`. `bot_sessions` só é acessível pela service role da Edge Function.
+- **Segurança (RLS)**: público lê produtos ativos, novidades publicadas e `settings.store`; cria pedido apenas via `place_order()` (valida canal, quantidade de 1 a 500, até 20 itens, produto ativo, loja aberta); `loyalty_stamps()` devolve só um número; `check_coupon()` só confere o cupom, sem gravar. As regras do cupom ficam em `coupon_discount()`, que o público não chama direto. Cupons, campanhas, envios, a lista de saída e a view de clientes exigem `is_admin()`, como todo o resto. `bot_sessions` só é acessível pela service role da Edge Function.
 
 ## 4. Interface
 
@@ -176,4 +187,3 @@ Atenção operacional:
 2. Agenda de produção por data de retirada (campo `pickup_at` + calendário).
 3. Pix com QR code dinâmico e baixa automática (Mercado Pago / Asaas).
 4. Estoque de insumos com ficha técnica por produto (custo calculado automaticamente).
-5. Cupons para turmas de formandos.
