@@ -707,7 +707,7 @@ function viewNews(v, signal) {
       if (f.wa.checked) {
         try {
           const r = await store.broadcast(n.id);
-          toast(r.demo ? 'Publicado! (envio pelo bot simulado no modo demo)' : `Publicado e enviado para ${r.sent} cliente(s) 🎉`);
+          toast(r.demo ? 'Publicado! (envio pelo bot simulado no modo demo)' : r.queued ? 'Publicado! O bot envia pelo WhatsApp em até 1 minuto 📲' : `Publicado e enviado para ${r.sent} cliente(s) 🎉`);
         } catch (ex) { toast(`Publicado no site. Bot: ${ex.message}`, 'err'); }
       } else toast('Novidade publicada ✨');
       S.news = await store.listNews({ all: true });
@@ -755,14 +755,15 @@ function viewBot(v, signal) {
     <div class="cols cols--2">
       <div style="display:grid;gap:18px;align-content:start">
         <section class="panel"><div class="panel__head"><h2>Status da integração</h2></div>
-          <p class="status-line"><span class="dot" style="background:${live ? 'var(--leaf)' : 'var(--honey)'}"></span>${live ? 'Bot conectado ao WhatsApp Business (Cloud API)' : 'Bot ainda não conectado — o simulador ao lado já funciona'}</p>
-          ${live ? `<p class="hint">Webhook: <span class="codeline">${esc(CONFIG.BOT_FUNCTION_URL)}</span></p>` : `
+          ${live ? `<p class="status-line"><span class="dot" style="background:var(--leaf)"></span>Bot conectado ao WhatsApp Business (Cloud API)</p>
+          <p class="hint">Webhook: <span class="codeline">${esc(CONFIG.BOT_FUNCTION_URL)}</span></p>` : `
+          <p class="status-line" id="botLive"><span class="dot" style="background:var(--honey)"></span>Verificando o bot…</p>
           <ol class="steps-list">
-            <li>Crie um app em <b>developers.facebook.com</b> → WhatsApp → Cloud API e registre o número da loja.</li>
-            <li>Faça o deploy da função: <code>supabase functions deploy whatsapp-bot --no-verify-jwt</code></li>
-            <li>Configure os segredos <code>WA_TOKEN</code>, <code>WA_PHONE_ID</code> e <code>WA_VERIFY_TOKEN</code>.</li>
-            <li>No painel da Meta, aponte o webhook para a URL da função e assine o campo <code>messages</code>.</li>
-            <li>Cole a URL em <code>BOT_FUNCTION_URL</code> no arquivo <code>assets/js/config.js</code>.</li>
+            <li>No computador que vai ficar ligado, entre na pasta <code>bot</code> e rode <code>npm install</code> (só na primeira vez).</li>
+            <li>Copie <code>.env.example</code> para <code>.env</code> e cole a <b>Secret key</b> do Supabase.</li>
+            <li>Rode <code>npm start</code>: aparece um QR Code no terminal.</li>
+            <li>No celular da loja: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → escaneie.</li>
+            <li>Deixe o terminal aberto. Novidades marcadas com WhatsApp saem em até 1 minuto.</li>
           </ol>`}
         </section>
         <section class="panel"><div class="panel__head"><div><h2>Números autorizados</h2><p>Quem pode postar novidades e ver pedidos pelo bot</p></div><button class="btn btn--sm" id="addAdm">${icon('plus')} Adicionar</button></div>
@@ -793,6 +794,15 @@ function viewBot(v, signal) {
         <div style="text-align:center;margin-top:10px"><button class="btn btn--soft btn--sm" id="simReset">${icon('refresh')} Reiniciar conversa</button></div>
       </section>
     </div>`;
+
+  // O bot por QR Code grava um "sinal de vida" a cada 30 s em settings.bot.
+  const botLive = $('#botLive', v);
+  if (botLive) store.botStatus().then((b) => {
+    const on = b?.last_seen && Date.now() - new Date(b.last_seen).getTime() < 120e3;
+    botLive.innerHTML = `<span class="dot" style="background:${on ? 'var(--leaf)' : 'var(--honey)'}"></span>${
+      on ? `Bot online no WhatsApp${b.phone ? ` (${formatPhone(b.phone)})` : ''}`
+        : b?.last_seen ? `Bot desligado — visto pela última vez ${timeAgo(b.last_seen)}` : 'Bot ainda não conectado — o simulador ao lado já funciona'}`;
+  }).catch(() => {});
 
   const msgs = $('#msgs', v);
   const draw = () => {

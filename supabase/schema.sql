@@ -53,8 +53,10 @@ create table if not exists public.news (
   channels text[] not null default '{site}',
   published boolean not null default true,
   author text not null default '',
+  wa_sent_at timestamptz,         -- preenchido pelo bot quando a novidade sai no WhatsApp
   created_at timestamptz not null default now()
 );
+alter table public.news add column if not exists wa_sent_at timestamptz;
 
 create table if not exists public.bot_admins (
   id uuid primary key default gen_random_uuid(),

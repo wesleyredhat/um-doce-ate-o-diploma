@@ -2,3 +2,5 @@
 supabase/.temp/
 supabase/.branches/
 .env
+node_modules/
+bot/auth/

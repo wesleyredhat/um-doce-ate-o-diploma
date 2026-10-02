@@ -208,6 +208,8 @@ const DemoStore = {
   },
   async listSubscribers() { return read('subscribers', []); },
 
+  async botStatus() { return null; },
+
   async broadcast() {
     return { sent: 0, demo: true };
   },
@@ -305,8 +307,14 @@ const SupabaseStore = {
   async subscribe() {},
   async listSubscribers() { return must(await sb.from('subscribers').select('*')); },
 
+  // Bot por QR Code (pasta bot/): ele busca sozinho as novidades com canal WhatsApp ainda não enviadas.
+  async botStatus() {
+    const row = must(await sb.from('settings').select('value').eq('key', 'bot').maybeSingle());
+    return row?.value || null;
+  },
+
   async broadcast(newsId) {
-    if (!CONFIG.BOT_FUNCTION_URL) throw new Error('BOT_FUNCTION_URL não configurada');
+    if (!CONFIG.BOT_FUNCTION_URL) return { queued: true };
     const { data } = await sb.auth.getSession();
     const res = await fetch(`${CONFIG.BOT_FUNCTION_URL}/broadcast`, {
       method: 'POST',

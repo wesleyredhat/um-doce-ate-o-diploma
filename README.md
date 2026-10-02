@@ -7,7 +7,7 @@ Roda 100% estático no **GitHub Pages**; dados e login ficam no **Supabase** (pl
 |---|---|
 | Loja | `index.html` — carrossel de destaques, cardápio, pedido simplificado (nome, WhatsApp, produto, quantidade), novidades, Carteirinha do Formando |
 | Painel | `admin.html` — login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, bot, ajustes |
-| Bot | `supabase/functions/whatsapp-bot` — webhook do WhatsApp Cloud API; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
+| Bot | `bot/` — WhatsApp comum conectado por QR Code; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
 | Banco | `supabase/schema.sql` — tabelas, RLS e funções `place_order` / `loyalty_stamps` |
 | Especificação | [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md) |
 
@@ -51,24 +51,30 @@ O arquivo `.nojekyll` garante que todas as pastas sejam servidas como estão.
 
 A chave `anon` pode ficar no código público: o acesso é controlado pelas políticas RLS. Clientes só conseguem criar pedidos pela função `place_order` (preço e custo são calculados no servidor) e consultar a contagem de selos. Pedidos, custos e finanças só são visíveis para usuários na tabela `admins`.
 
-## 4. Conectar o bot do WhatsApp (opcional)
+## 4. Bot no WhatsApp comum (QR Code)
 
-O simulador na aba **Bot WhatsApp** do painel já funciona sem isso.
+Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Meta): o bot entra como um "aparelho conectado", igual ao WhatsApp Web. Precisa de um computador ligado com [Node.js](https://nodejs.org) 20+.
 
-1. [developers.facebook.com](https://developers.facebook.com) → criar app → produto **WhatsApp** → registrar o número da loja (WhatsApp Business Platform / Cloud API).
-2. Gere um token permanente (usuário de sistema) com `whatsapp_business_messaging`.
-3. Deploy da função:
-   ```bash
-   supabase link --project-ref <ref>
-   supabase secrets set WA_TOKEN=... WA_PHONE_ID=... WA_VERIFY_TOKEN=um-texto-secreto WA_APP_SECRET=... OWNER_PHONE=5511999999999 SITE_URL=https://<usuario>.github.io/um-doce-ate-o-diploma/
-   supabase functions deploy whatsapp-bot --no-verify-jwt
+1. No Supabase, **SQL Editor**, rode (uma vez):
+   ```sql
+   alter table public.news add column if not exists wa_sent_at timestamptz;
    ```
-4. No painel da Meta → WhatsApp → Configuração → Webhook: URL `https://<ref>.supabase.co/functions/v1/whatsapp-bot`, token = `WA_VERIFY_TOKEN`, assine `messages`.
-5. Cole a URL da função em `BOT_FUNCTION_URL` no `config.js` (habilita "Enviar pelo bot" nas novidades).
+2. No terminal:
+   ```bash
+   cd bot
+   npm install
+   cp .env.example .env
+   ```
+3. Abra `bot/.env` e cole em `SUPABASE_SECRET_KEY` a **Secret key** (Supabase → Project Settings → API Keys). Essa chave dá acesso total ao banco: fica só nesse arquivo, que não vai para o GitHub.
+4. `npm start` → aparece um QR Code. No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie.
+5. Deixe o terminal aberto. A aba **Bot WhatsApp** do painel mostra se o bot está online.
 
-**Novidades fora da janela de 24h**: a Meta só permite mensagens de template aprovadas. Crie um template de marketing com duas variáveis (título e texto) e informe o nome em `WA_TEMPLATE_NEWS`.
+- A sessão fica salva em `bot/auth/`; ao reiniciar não pede QR de novo. Para trocar de número, apague essa pasta.
+- Novidades publicadas no painel com o canal **WhatsApp** são enviadas pelo bot em até 1 minuto aos clientes inscritos (opção 4 do menu), com pausa de alguns segundos entre cada envio.
+- **Risco**: conexão por QR não é oficial. O WhatsApp pode bloquear números que mandam muitas mensagens para quem não tem o contato salvo. Use para responder clientes e envie novidades só a quem se inscreveu.
+- **Grupos**: o bot responde no grupo apenas a mensagens que começam com `#pedido` e continua a conversa no privado.
 
-**Grupos**: o bot só responde em grupo quando a mensagem começa com `#pedido` e continua a conversa no privado. O suporte a grupos depende da API/provedor contratado. Sem ele, o botão **Compartilhar no grupo** de cada novidade abre o WhatsApp com o texto pronto.
+A alternativa oficial (WhatsApp Business Cloud API, paga por conversa) continua em `supabase/functions/whatsapp-bot`; para usá-la, preencha `BOT_FUNCTION_URL` em `config.js`.
 
 ## Estrutura
 
