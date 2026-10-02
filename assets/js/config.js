@@ -5,12 +5,12 @@
 export const CONFIG = {
   STORE_NAME: 'Um Doce Até o Diploma',
   TAGLINE: 'Doces que adoçam sua jornada',
-  WHATSAPP_NUMBER: '5511999999999', // DDI + DDD + número, só dígitos
+  WHATSAPP_NUMBER: '5511941776869', // DDI + DDD + número, só dígitos
   INSTAGRAM: 'umdoceateodiploma',
   CITY: 'Entregas no campus e região',
 
-  SUPABASE_URL: '',
-  SUPABASE_ANON_KEY: '',
+  SUPABASE_URL: 'https://vaktmlovqpaxbfhccxcq.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_BNJm0LJf5j-V-1stW3E7fw_cgE-ALpU',
 
   // URL pública da Edge Function do bot (supabase/functions/whatsapp-bot).
   // Usada pelo painel para disparar novidades pelo WhatsApp.
