@@ -48,11 +48,24 @@ export function parseQuickOrder(text, products) {
   return out;
 }
 
+// "cupom VOLTA10" → 'VOLTA10'. O código precisa ter número ou vir em maiúsculas: "qual cupom tem hoje?" não é cupom.
+const COUPON_PHRASE = /\bcupom\s*:?\s*([a-z0-9]{3,20})\b/i;
+export function couponCodeIn(text) {
+  const m = COUPON_PHRASE.exec(String(text || ''));
+  return m && (/\d/.test(m[1]) || m[1] === m[1].toUpperCase()) ? m[1].toUpperCase() : null;
+}
+// Só o código, no meio de uma conversa: letras e números juntos, como VOLTA10.
+const BARE_CODE = /^(?=.*\d)(?=.*[a-z])[a-z0-9]{4,20}$/i;
+// Mesmas mensagens de recusa de coupon_discount (supabase/schema.sql).
+const COUPON_ERROR = /^(Cupom |Você já usou|Vale para pedidos)/;
+const MIN_ORDER = /^Vale para pedidos/;
+
 // Número de uso pessoal: o bot só entra na conversa quando a mensagem é claramente sobre encomenda.
 //   'keyword'     → "menu", "cardápio", "#pedido" (também chamam o bot de volta depois de uma pausa)
 //   'unsubscribe' → pedido para sair das novidades (funciona sempre)
 //   'subscribe'   → botão "Quero receber as novidades" do site
 //   'site'        → outras mensagens prontas do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX")
+//   'coupon'      → "cupom VOLTA10" (o motor anota o cupom para o pedido)
 //   'order'       → pedido escrito: verbo de pedido perto do produto, pergunta de preço ou "10 brigadeiros"
 //   null          → conversa pessoal: o bot fica em silêncio
 const STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'com', 'e', 'a', 'o']);
@@ -83,8 +96,8 @@ const mentionedProduct = (text, products) => productPatterns(products).parts.fin
 const GREETING = /^(?:(?:oi+e?|ola|opa|bom dia|boa tarde|boa noite|e ai|eai|hey|tudo bem|td bem|tudo bom|cris|moca|amiga|gente)\s*)+/;
 const POLITE = '(?: (?:por favor|pf|pfv|pfvr|com voces?|com vcs?|ai|aqui|hoje|amanha|pra (?:hoje|amanha|sabado|domingo|sexta)))*';
 const KEYWORD = new RegExp(`^(?:#(?:pedido|cardapio|menu)\\b.*|(?:(?:ver|o|abre|abrir|mostra|mostrar|manda|mande|envia|envie|me (?:manda|mande|envia|envie|passa|passe|mostra)(?: o)?|qual (?:e )?o|quero ver o|queria ver o|tem) )?(?:menu|cardapio)(?: (?:de voces|da loja|dos doces|de doces|completo))?${POLITE})$`);
-export const UNSUBSCRIBE = /\b(?:parar|pare|para de|sair|cancelar|cancela|descadastrar|descadastra|remover|remove|tirar|tira|chega de|nao (?:quero|desejo) mais(?: receber)?)\b(?:\s+[a-z]+){0,4}?\s+novidades\b/;
-const SUBSCRIBE = /^(?:quero|queria|gostaria de) receber (?:as )?novidades(?: (?:por aqui|aqui|de voces))?$/;
+export const UNSUBSCRIBE = /\b(?:parar|pare|para de|sair|cancelar|cancela|descadastrar|descadastra|remover|remove|tirar|tira|chega de|nao (?:quero|desejo) mais(?: receber)?)\b(?:\s+[a-z]+){0,4}?\s+(?:novidades|promocoes)\b/;
+const SUBSCRIBE = /^(?:quero|queria|gostaria de) receber (?:as )?(?:novidades|promocoes)(?: (?:por aqui|aqui|de voces))?$/;
 const QTY_SHORT = '(?:\\d{1,3}x?|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze|vinte|trinta|cinquenta|cem)';
 const VERB = '(?:quero|queria|gostaria|vou querer|preciso(?: de)?|me ve|separa|reserva|encomendar|encomendo|pedir|faz|fazem|faria|fariam|tem como fazer|da pra fazer|consegue fazer|conseguem fazer)';
 const PRICE = '(?:quanto (?:custa|custam|e|sai|saem|fica|ficam|ta|esta|cobra|cobram)|qual (?:e )?o (?:valor|preco)|valor|preco|precos)';
@@ -100,6 +113,7 @@ export function detectIntent(text, products) {
   if (KEYWORD.test(body)) return 'keyword';
   if (SUBSCRIBE.test(body)) return 'subscribe';
   if (/\bvim pelo site\b.*\bencomenda\b/.test(c) || /\bpedido\b.*\bdd-[a-z0-9]{4}\b/.test(t)) return 'site';
+  if (couponCodeIn(text)) return 'coupon';
   const P = productPattern(products);
   const order = [
     // "quero fazer uma encomenda", "... pra sábado", "... de brigadeiros"; "um pedido no mercado" não
@@ -159,8 +173,20 @@ function addToCart(cart, product, qty) {
   else cart.push({ product_id: product.id, name: product.name, price: Number(product.price), qty });
 }
 
-function confirmText(s) {
-  return `Seu pedido até aqui:\n${cartText(s.cart)}\n*Total: ${brl(cartTotal(s.cart))}*\n\n*1* ✅ Confirmar\n*2* ➕ Adicionar mais itens\n*3* ❌ Cancelar`;
+const cartItems = (cart) => (cart || []).map((i) => ({ product_id: i.product_id, qty: i.qty }));
+const CONFIRM_OPTIONS = '\n\n*1* ✅ Confirmar\n*2* ➕ Adicionar mais itens\n*3* ❌ Cancelar';
+
+// Resumo do pedido com o desconto do cupom, conferido de novo a cada vez (o carrinho pode ter mudado).
+// Cupom que não vale mais sai da sessão; se só falta chegar ao pedido mínimo, continua anotado.
+async function summary(s, ctx, phone) {
+  const head = `Seu pedido até aqui:\n${cartText(s.cart)}`;
+  const subtotal = cartTotal(s.cart);
+  if (!s.coupon || !ctx.checkCoupon) return `${head}\n*Total: ${brl(subtotal)}*`;
+  const r = await ctx.checkCoupon(s.coupon, phone, cartItems(s.cart));
+  if (r.valid) return `${head}\nSubtotal: ${brl(subtotal)}\n🎟️ Desconto ${r.code}: −${brl(r.discount)}\n*Total: ${brl(r.total)}*`;
+  const code = s.coupon;
+  if (!MIN_ORDER.test(r.message)) delete s.coupon;
+  return `${head}\n⚠️ Cupom ${code} não aplicado: ${r.message}.\n*Total: ${brl(subtotal)}*`;
 }
 
 async function adminCommand(text, admin, ctx) {
@@ -219,7 +245,7 @@ export async function handleMessage(msg, ctx) {
   const save = (next) => ctx.saveSession(phone, next);
 
   if (['menu', 'oi', 'ola', 'oie', 'bom dia', 'boa tarde', 'boa noite', 'inicio', 'voltar'].includes(t)) {
-    await save({ state: 'menu', cart: s.cart || [], menuShown: true });
+    await save({ state: 'menu', cart: s.cart || [], menuShown: true, coupon: s.coupon });
     return [menuText(settings, msg.profileName)];
   }
   if (['cancelar', 'sair', 'parar'].includes(t)) {
@@ -230,7 +256,7 @@ export async function handleMessage(msg, ctx) {
   if (kind === 'unsubscribe') {
     // false = a pessoa nem estava inscrita: fica quieto (pode ser só conversa)
     const was = await ctx.subscribe(phone, msg.profileName, false);
-    return was === false ? [] : ['Ok, não vou mais enviar novidades. 💛'];
+    return was === false ? [] : ['Ok, não vou mais enviar novidades nem promoções. 💛 Se mudar de ideia, mande *quero receber novidades*.'];
   }
   if (kind === 'subscribe') {
     await ctx.subscribe(phone, msg.profileName, true);
@@ -253,15 +279,50 @@ export async function handleMessage(msg, ctx) {
     return [`No momento estamos com a agenda cheia 🥲 ${settings.notice || ''}\nMande *3* para ver as novidades.`];
   }
 
+  // Cupom: "cupom VOLTA10" em qualquer mensagem, ou só o código no meio da conversa.
+  const coupon = ctx.checkCoupon
+    ? couponCodeIn(text) || (['menu', 'more', 'confirm'].includes(s.state) && BARE_CODE.test(text) ? text.toUpperCase() : null)
+    : null;
+  let note = '';
+  if (coupon) {
+    const r = await ctx.checkCoupon(coupon, phone, cartItems(s.cart));
+    // Abaixo do pedido mínimo ainda vale anotar: o resumo confere de novo quando o carrinho crescer.
+    const minOnly = !r.valid && MIN_ORDER.test(r.message || '');
+    if (!r.valid && !minOnly) {
+      if (s.state !== 'confirm') return [`🎟️ ${r.message}.`];
+      const sum = await summary(s, ctx, phone);
+      await save(s);
+      return [`🎟️ ${r.message}.\n\n${sum}${CONFIRM_OPTIONS}`];
+    }
+    s = { ...s, coupon: r.code };
+    await save(s);
+    note = `🎟️ Cupom *${r.code}* anotado: ${r.label} de desconto${r.min_order ? ` em pedidos a partir de ${brl(r.min_order)}` : ''}.`;
+  }
+
   // Atalho: pedido em linguagem natural ("quero 10 brigadeiros e 2 empadinhas"), também em grupos com #pedido
-  const quick = parseQuickOrder(text.replace(/^#pedido/i, ''), products);
+  const quick = parseQuickOrder(text.replace(/^#pedido/i, '').replace(COUPON_PHRASE, ' '), products);
   if (quick.length && ['menu', 'product', 'more'].includes(s.state)) {
     const cart = s.cart || [];
     quick.forEach(({ product, qty }) => addToCart(cart, product, qty));
     s = { ...s, cart, state: 'name', fromGroup: !!msg.isGroup || s.fromGroup };
+    const sum = await summary(s, ctx, phone);
     await save(s);
     const intro = msg.isGroup ? `Anotado, ${msg.profileName || 'pessoal'}! Vou continuar com você no privado 😉\n\n` : '';
-    return [`${intro}${confirmText(s).replace(/\n\n\*1\*[\s\S]*$/, '')}\n\nPara quem é o pedido? Mande seu *nome*${msg.profileName ? ` ou *1* para usar "${msg.profileName}"` : ''}.`];
+    return [`${intro}${note ? `${note}\n\n` : ''}${sum}\n\nPara quem é o pedido? Mande seu *nome*${msg.profileName ? ` ou *1* para usar "${msg.profileName}"` : ''}.`];
+  }
+
+  // Mensagem só com o cupom: anota e segue de onde a conversa estava.
+  if (note) {
+    if (s.state === 'confirm') {
+      const sum = await summary(s, ctx, phone);
+      await save(s);
+      return [`${note}\n\n${sum}${CONFIRM_OPTIONS}`];
+    }
+    s = { ...s, state: s.cart?.length ? 'more' : 'menu', pending: undefined };
+    await save(s);
+    return [s.cart?.length
+      ? `${note}\n\nQuer mais alguma coisa? Mande o *número* de outro produto ou *0* para finalizar.\n\n${catalogText(products)}`
+      : `${note}\n\nMande *1* para encomendar ou escreva direto, tipo "quero 10 brigadeiros".`];
   }
 
   switch (s.state) {
@@ -317,11 +378,11 @@ export async function handleMessage(msg, ctx) {
     case 'qty': {
       const qty = /^\d+$/.test(t) ? parseInt(t, 10) : NUM_WORDS[t];
       const p = products.find((x) => x.id === s.pending);
-      if (!p) { await save({ state: 'product', cart: s.cart }); return ['Ops, perdi o produto. Escolha de novo, por favor.']; }
+      if (!p) { await save({ state: 'product', cart: s.cart, coupon: s.coupon }); return ['Ops, perdi o produto. Escolha de novo, por favor.']; }
       if (!qty || qty < 1 || qty > 500) return ['Me manda só o número, tipo *6* 🙂'];
       const cart = s.cart || [];
       addToCart(cart, p, qty);
-      await save({ state: 'more', cart });
+      await save({ state: 'more', cart, coupon: s.coupon });
       return [`Anotado: ${qty}x ${p.name} ✅\n\nQuer mais alguma coisa? Mande o *número* de outro produto ou *0* para finalizar.\n\n${catalogText(products)}`];
     }
 
@@ -330,19 +391,30 @@ export async function handleMessage(msg, ctx) {
       const size = [...name].length; // emoji conta como 1, igual ao banco (nome de 2 a 80 letras)
       if (size < 2 || size > 80 || /^\d+$/.test(name)) return ['Me diz seu *nome*, por favor 🙂'];
       const next = { ...s, state: 'confirm', name };
+      const sum = await summary(next, ctx, phone);
       await save(next);
-      return [confirmText(next)];
+      return [`${sum}${CONFIRM_OPTIONS}`];
     }
 
     case 'confirm': {
       if (t === '1' || t === 'sim' || t === 'confirmar') {
-        const r = await ctx.placeOrder({
-          customer_name: s.name, phone, channel: s.fromGroup ? 'grupo' : 'whatsapp',
-          items: s.cart.map((i) => ({ product_id: i.product_id, qty: i.qty })),
-        });
+        let r;
+        try {
+          r = await ctx.placeOrder({
+            customer_name: s.name, phone, channel: s.fromGroup ? 'grupo' : 'whatsapp', items: cartItems(s.cart),
+            ...(s.coupon ? { coupon: s.coupon } : {}),
+          });
+        } catch (e) {
+          // O cupom deixou de valer entre o resumo e a confirmação (esgotou, expirou): segue sem ele.
+          if (!s.coupon || !COUPON_ERROR.test(e.message)) throw e;
+          const next = { ...s, coupon: undefined };
+          await save(next);
+          return [`🎟️ ${e.message}, então tirei o cupom.\n\n${await summary(next, ctx, phone)}${CONFIRM_OPTIONS}`];
+        }
         await save(null);
         const pix = settings.pix_key ? `\n\n💸 Pix: *${settings.pix_key}*` : '';
-        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${pix}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
+        const off = Number(r.discount) > 0 ? ` (já com ${brl(r.discount)} de desconto)` : '';
+        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${off}${pix}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
       }
       if (t === '2') {
         await save({ ...s, state: 'more' });
@@ -352,7 +424,9 @@ export async function handleMessage(msg, ctx) {
         await save(null);
         return ['Pedido cancelado. Quando quiser, é só mandar *oi* 💛'];
       }
-      return [confirmText(s)];
+      const sum = await summary(s, ctx, phone);
+      await save(s);
+      return [`${sum}${CONFIRM_OPTIONS}`];
     }
 
     default:

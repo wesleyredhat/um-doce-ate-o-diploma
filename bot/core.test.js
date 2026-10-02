@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCore, SESSION_TTL_MS, PAUSE_TTL_MS } from './core.js';
 import { detectIntent, parseQuickOrder, samePhone } from '../supabase/functions/_shared/bot-engine.js';
+import { quoteCoupon, phoneKey } from '../assets/js/coupons.js';
 
 const PRODUCTS = [
   { id: 'p1', name: 'Brigadeiro', category: 'doces', price: 4, cost: 1.35, active: true },
@@ -13,6 +14,14 @@ const PRODUCTS = [
 ];
 const ANA = '5511988887777';
 const CRIS = '5511941776869';
+const C = { kind: 'percent', value: 10, min_order: 0, starts_on: null, ends_on: null, max_uses: null, active: true };
+const COUPONS = {
+  VOLTA10: { ...C, code: 'VOLTA10' },
+  DOCE5: { ...C, code: 'DOCE5', kind: 'fixed', value: 5, min_order: 30 },
+  FIM1: { ...C, code: 'FIM1', max_uses: 1 },
+  VELHO1: { ...C, code: 'VELHO1', ends_on: '2026-09-30' },
+};
+const subtotalOf = (items) => items.reduce((s, i) => s + i.qty * PRODUCTS.find((p) => p.id === i.product_id).price, 0);
 
 function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
   let clock = Date.parse('2026-10-02T12:00:00Z');
@@ -20,6 +29,12 @@ function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
   const orders = [];
   const subs = new Set(subscribed);
   const news = [];
+  const used = new Map(); // código → Set de phoneKey de quem já usou
+  const checkCoupon = async (code, phone, items) => {
+    const c = COUPONS[String(code).toUpperCase()];
+    const u = used.get(c?.code) || new Set();
+    return quoteCoupon(c, { code, subtotal: subtotalOf(items), uses: u.size, usedByPhone: u.has(phoneKey(phone)), now: clock });
+  };
   const sessions = {
     get: async (phone) => rows.get(phone) ?? null,
     save: async (phone, data) => {
@@ -34,10 +49,20 @@ function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
     listNews: async () => [],
     // igual ao bot: ao sair, diz se a pessoa estava inscrita
     subscribe: async (phone, _name, on) => (on ? void subs.add(phone) : subs.delete(phone)),
+    checkCoupon,
     placeOrder: async (o) => {
       if (failOrder) throw new Error('banco fora do ar');
+      const subtotal = subtotalOf(o.items);
+      let discount = 0;
+      if (o.coupon) {
+        const q = await checkCoupon(o.coupon, o.phone, o.items);
+        if (!q.valid) throw new Error(q.message);
+        discount = q.discount;
+        if (!used.has(q.code)) used.set(q.code, new Set());
+        used.get(q.code).add(phoneKey(o.phone));
+      }
       orders.push(o);
-      return { code: 'DD-TEST', total: o.items.reduce((s, i) => s + i.qty * 4, 0) };
+      return { code: 'DD-TEST', total: subtotal - discount, discount };
     },
     findOrder: async (code) => (code === 'DD-K7P2' ? { code, phone: ANA, total: 40, items: [{ qty: 10, name: 'Brigadeiro' }] } : null),
     createNews: async (n) => { news.push(n); return { id: 'n1', ...n }; },
@@ -47,7 +72,7 @@ function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
   };
   const core = createCore({ ctx, sessions, now: () => clock, log: () => {} });
   const say = (text, phone = ANA, extra = {}) => core.handleIncoming({ phone, text, profileName: 'Ana', isGroup: false, ...extra });
-  return { core, say, rows, orders, subs, news, tick: (ms) => { clock += ms; } };
+  return { core, say, rows, orders, subs, news, used, tick: (ms) => { clock += ms; } };
 }
 
 test('mensagens pessoais ficam sem resposta', async () => {
@@ -92,6 +117,8 @@ test('identifica mensagens de encomenda', () => {
     'quero uma caixinha de docinhos': 'order', '2 morangos cravejados': 'order', 'uma duzia de casadinhos': 'order',
     'meia dúzia de brigadeiros': 'order', 'preciso de 50 casadinhos pra sexta': 'order',
     'oi tudo bem': null, 'comprei 3 caixas de leite': null, 'faz 1 frango assado': null, 'quero uma caixinha': null,
+    'cupom VOLTA10': 'coupon', 'Oi, tenho o cupom doce5': 'coupon', 'parar promoções': 'unsubscribe', 'quero receber promoções': 'subscribe',
+    'qual cupom tem hoje?': null, 'tem cupom do ifood?': null,
   };
   for (const [text, want] of Object.entries(cases)) assert.equal(detectIntent(text, PRODUCTS), want, text);
 });
@@ -265,4 +292,79 @@ test('erro ao gravar o pedido avisa o cliente', async () => {
   await say('quero 2 brigadeiros');
   await say('1');
   assert.match((await say('1'))[0], /Ops, algo deu errado/);
+});
+
+test('cupom no pedido escrito: desconto no resumo e no pedido', async () => {
+  const { say, orders } = setup();
+  const [r] = await say('quero 10 brigadeiros cupom volta10');
+  assert.match(r, /Cupom \*VOLTA10\* anotado: 10% de desconto/);
+  assert.match(r, /Desconto VOLTA10: −R\$ 4,00/);
+  assert.match(r, /\*Total: R\$ 36,00\*/);
+  await say('1'); // nome do perfil
+  const [done] = await say('1');
+  assert.match(done, /Total: \*R\$ 36,00\* \(já com R\$ 4,00 de desconto\)/);
+  assert.equal(orders[0].coupon, 'VOLTA10');
+});
+
+test('"cupom X" sozinho chama o bot e fica guardado para o pedido', async () => {
+  const { say, orders } = setup();
+  const [r] = await say('Oi! cupom VOLTA10');
+  assert.match(r, /anotado/);
+  assert.match(r, /Mande \*1\* para encomendar/);
+  assert.match((await say('quero 5 casadinhos'))[0], /Desconto VOLTA10: −R\$ 2,00/);
+  await say('1');
+  await say('1');
+  assert.equal(orders[0].coupon, 'VOLTA10');
+});
+
+test('só o código, no meio da conversa, também vale', async () => {
+  const { say } = setup();
+  await say('quero 10 brigadeiros');
+  await say('Ana');
+  const [r] = await say('VOLTA10');
+  assert.match(r, /\*Total: R\$ 36,00\*/);
+  assert.match(r, /\*1\* ✅ Confirmar/);
+});
+
+test('cupom recusado explica o motivo', async () => {
+  for (const [code, msg] of Object.entries({ VELHO1: 'Cupom expirado', NADA99: 'Cupom não encontrado' })) {
+    const { say } = setup();
+    await say('quero 10 brigadeiros');
+    assert.match((await say(`cupom ${code}`))[0], new RegExp(msg));
+  }
+});
+
+test('pedido mínimo: o cupom fica anotado e entra quando o pedido chega lá', async () => {
+  const { say } = setup();
+  assert.match((await say('cupom DOCE5'))[0], /R\$ 5,00 de desconto em pedidos a partir de R\$ 30,00/);
+  assert.match((await say('quero 5 brigadeiros'))[0], /não aplicado: Vale para pedidos a partir de R\$ 30,00/);
+  await say('Ana');
+  await say('2'); // adicionar mais itens
+  await say('1'); // brigadeiro
+  await say('5');
+  await say('0'); // finalizar
+  const [r] = await say('1'); // nome do perfil
+  assert.match(r, /Desconto DOCE5: −R\$ 5,00/);
+  assert.match(r, /\*Total: R\$ 35,00\*/);
+});
+
+test('cupom esgotou antes de confirmar: avisa e oferece seguir sem ele', async () => {
+  const { say, used, orders } = setup();
+  await say('quero 10 brigadeiros cupom FIM1');
+  await say('1');
+  used.set('FIM1', new Set(['outra-pessoa'])); // alguém usou a última unidade
+  const [r] = await say('1');
+  assert.match(r, /Cupom esgotado, então tirei o cupom/);
+  assert.match(r, /\*Total: R\$ 40,00\*/);
+  assert.equal(orders.length, 0);
+  await say('1');
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].coupon, undefined);
+});
+
+test('"parar promoções" tira das campanhas e das novidades', async () => {
+  const { say, subs } = setup({ subscribed: [ANA] });
+  assert.match((await say('parar promoções'))[0], /não vou mais enviar novidades nem promoções/);
+  assert.ok(!subs.has(ANA));
+  assert.deepEqual(await setup().say('parar promoções'), [], 'quem não recebia nada fica sem resposta (pode ser conversa)');
 });
