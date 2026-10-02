@@ -6,7 +6,9 @@
 //
 // O QR Code aparece no terminal e no painel (aba Bot WhatsApp). Quando o bot responde
 // e quando fica quieto está em core.js. A sessão do WhatsApp fica em ./auth.
+import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import makeWASocket, { Browsers, DisconnectReason, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import { createClient } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
@@ -24,9 +26,10 @@ for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) {
 const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SECRET_KEY'), { auth: { persistSession: false } });
 const SITE_URL = env('SITE_URL');
 const OWNER_PHONE = env('OWNER_PHONE').replace(/\D/g, '');
-const AUTH_DIR = new URL('./auth', import.meta.url).pathname;
+const AUTH_DIR = fileURLToPath(new URL('./auth', import.meta.url));
 const TICK_MS = 30_000;
-const LOCK = new URL('./bot.pid', import.meta.url).pathname;
+const LOCK = fileURLToPath(new URL('./bot.pid', import.meta.url));
+const RECENT_MS = 2 * 60e3; // mensagem de cliente que chegou durante uma reconexão curta ainda é respondida
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const digits = (jid) => (jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
@@ -38,6 +41,7 @@ let online = false;
 let attempt = 0;
 const sentIds = new Set(); // mensagens do próprio bot: não contam como "alguém respondeu pelo celular"
 let queue = Promise.resolve();
+let stopping = false;
 
 async function sendText(jid, text) {
   try {
@@ -91,7 +95,8 @@ const ctx = {
   listNews: async () => (await db.from('news').select('*').eq('published', true).order('created_at', { ascending: false }).limit(3)).data ?? [],
   subscribe: async (phone, name, on) => {
     if (on) return void (await db.from('subscribers').upsert({ phone, name }));
-    const { data } = await db.from('subscribers').delete().eq('phone', phone).select('phone');
+    const { data, error } = await db.from('subscribers').delete().eq('phone', phone).select('phone');
+    if (error) throw new Error(error.message); // vira "Ops, tente de novo" em vez de silêncio
     return !!data?.length; // false: a pessoa nem estava inscrita
   },
   placeOrder: async (o) => {
@@ -195,12 +200,12 @@ async function onMessage(m, type) {
     if (type !== 'notify' && !(Date.now() - tsMs(m.messageTimestamp) < PAUSE_TTL_MS)) return;
     const phone = await pnOf(jid, key.remoteJidAlt);
     if (!phone || phone === digits(sock.user?.id)) return;
-    if (await core.pause(phone)) log(`bot pausado com +${phone}: resposta pelo celular`);
+    if (await core.pause(phone, tsMs(m.messageTimestamp) || Date.now())) log(`bot pausado com +${phone}: resposta pelo celular`);
     return;
   }
   // Mensagem de cliente que chegou com o bot fora do ar: fica para a pessoa da loja (ela vê no celular),
-  // sem resposta atrasada que pode atropelar o que já foi combinado por lá.
-  if (type !== 'notify') return;
+  // sem resposta atrasada que pode atropelar o que já foi combinado por lá. Reconexão de poucos segundos não conta.
+  if (stopping || (type !== 'notify' && !(Date.now() - tsMs(m.messageTimestamp) <= RECENT_MS))) return;
 
   const text = textOf(content).trim();
   const phone = await pnOf(isGroup ? key.participant : jid, isGroup ? key.participantAlt : key.remoteJidAlt);
@@ -270,13 +275,14 @@ async function start() {
 // Uma cópia só: duas usando a mesma sessão do WhatsApp se derrubam (por exemplo, npm start com o serviço ligado).
 try {
   const other = Number(readFileSync(LOCK, 'utf8'));
-  if (other && other !== process.pid) {
-    process.kill(other, 0); // dá erro se esse processo não existe mais
-    console.error(`Outra cópia do bot já está rodando (pid ${other}). Pare o serviço antes: ./instalar-servico-mac.sh remover`);
+  // O pid pode ter sido reaproveitado depois de uma queda de energia: só conta se for mesmo o bot.
+  const cmd = other && other !== process.pid ? execFileSync('ps', ['-p', String(other), '-o', 'command='], { encoding: 'utf8' }) : '';
+  if (/node\b.*\bindex\.js/.test(cmd)) {
+    console.error(`Outra cópia do bot já está rodando (pid ${other}). Se for o serviço, pare antes com: ./instalar-servico-mac.sh remover`);
     process.exit(1);
   }
-} catch (e) {
-  if (e.code === 'EPERM') { console.error('Outra cópia do bot já está rodando.'); process.exit(1); }
+} catch {
+  // sem trava, ou o processo antigo não existe mais (ps sai com erro)
 }
 writeFileSync(LOCK, String(process.pid));
 process.on('exit', () => { try { if (Number(readFileSync(LOCK, 'utf8')) === process.pid) rmSync(LOCK); } catch {} });
@@ -293,7 +299,8 @@ if ((await db.from('news').select('wa_sent_at').limit(1)).error?.code === '42703
 }
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
-    await Promise.race([queue, sleep(10e3)]); // termina a mensagem em andamento (um pedido sendo gravado)
+    stopping = true; // não começa mensagem nova; termina a que está em andamento (um pedido sendo gravado)
+    await Promise.race([queue, sleep(10e3)]);
     await setStatus({ state: 'desligado', qr: null }).catch(() => {});
     process.exit(0);
   });
