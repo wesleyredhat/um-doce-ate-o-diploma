@@ -6,7 +6,7 @@ export const CONFIG = {
   STORE_NAME: 'Um Doce Até o Diploma',
   TAGLINE: 'Doces que adoçam sua jornada',
   WHATSAPP_NUMBER: '5511941776869', // DDI + DDD + número, só dígitos
-  INSTAGRAM: 'umdoceateodiploma',
+  INSTAGRAM: 'umdoce.ateodiploma',
   CITY: 'Entrega ou retirada combinada pelo WhatsApp',
 
   SUPABASE_URL: 'https://vaktmlovqpaxbfhccxcq.supabase.co',
