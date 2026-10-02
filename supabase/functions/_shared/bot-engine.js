@@ -26,14 +26,19 @@ export function matchProduct(fragment, products) {
   return best;
 }
 
-// "quero 10 brigadeiros e 2 empadinhas" -> [{product, qty}]
+// "meia dúzia de", "um cento de"… viram número antes de ler o pedido
+const amounts = (t) => t.replace(/\bmeia duzia de\b/g, '6 ').replace(/\b(?:uma? )?duzias? de\b/g, '12 ')
+  .replace(/\bmeio cento de\b/g, '50 ').replace(/\b(?:um )?cento de\b/g, '100 ');
+
+// "quero 10 brigadeiros e 2 empadinhas." -> [{product, qty}]
+// A primeira palavra depois da quantidade precisa ser de um produto ("uma encomenda de brigadeiros" não é 1 brigadeiro).
 export function parseQuickOrder(text, products) {
-  const t = norm(text).replace(/\b(uma? )?duzias? de\b/g, '12 ');
-  const re = /(\d{1,3}|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze|vinte|trinta|cinquenta|cem)\s*(?:x\s*)?([a-z][a-z ]*?)(?=\s*(?:,|\be\b|\+|;|$|\d))/g;
+  const t = amounts(norm(text));
+  const re = /(\d{1,3}|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze|vinte|trinta|cinquenta|cem)\s*(?:x\s*)?([a-z][a-z ]*?)(?=\s*(?:,|\be\b|\+|;|$|\d|[.!?)]))/g;
   const out = [];
   for (const m of t.matchAll(re)) {
     const qty = /^\d+$/.test(m[1]) ? parseInt(m[1], 10) : NUM_WORDS[m[1]];
-    const p = matchProduct(m[2], products);
+    const p = matchProduct(m[2].trim().split(/\s+/)[0], products) && matchProduct(m[2], products);
     if (p && qty > 0) {
       const found = out.find((x) => x.product.id === p.id);
       if (found) found.qty += qty;
@@ -44,44 +49,84 @@ export function parseQuickOrder(text, products) {
 }
 
 // Número de uso pessoal: o bot só entra na conversa quando a mensagem é claramente sobre encomenda.
-//   'explicit' → palavra-chave ou mensagem pronta do site (também chama o bot de volta depois de uma pausa)
-//   'order'    → produto com quantidade ("quero 10 brigadeiros") ou pergunta de preço de um produto
-//   null       → conversa pessoal: o bot fica em silêncio
-const EXPLICIT = [
-  /^(?:ver |o |me (?:manda|mande|envia|envie) o )?menu\b/,
-  /\bcardapio\b/,
-  /^#(?:pedido|cardapio|menu)\b/,
-  /\bvim pelo site\b/,
-  /\bdd-[a-z0-9]{4}\b/,
-  /\b(?:receber|parar)(?: as)? novidades\b/,
-  /\b(?:quero|queria|gostaria de|preciso|posso) (?:fazer (?:um |uma )?(?:pedido|encomenda)|encomendar)\b/,
-];
-const QTY_WORDS = new Set(['dois', 'duas', 'tres', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'doze', 'quinze', 'vinte', 'trinta', 'cinquenta', 'cem']);
-const ASK_WORDS = /\b(?:quanto|valor|preco|precos|quero|queria|gostaria|encomendar|reservar?|separar?)\b/;
+//   'keyword'     → "menu", "cardápio", "#pedido" (também chamam o bot de volta depois de uma pausa)
+//   'unsubscribe' → pedido para sair das novidades (funciona sempre)
+//   'subscribe'   → botão "Quero receber as novidades" do site
+//   'site'        → outras mensagens prontas do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX")
+//   'order'       → pedido escrito: verbo de pedido perto do produto, pergunta de preço ou "10 brigadeiros"
+//   null          → conversa pessoal: o bot fica em silêncio
+const STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'com', 'e', 'a', 'o']);
+// Primeira palavra do nome comum demais no dia a dia: só vale junto de outra palavra do nome
+// ("caixinha de docinhos", "morango cravejado"; "caixinha de leite" e "morango na feira" não).
+const GENERIC = new Set(['caixinha', 'caixa', 'kit', 'combo', 'pote', 'copo', 'fatia', 'mini', 'morango', 'uva', 'coco', 'leite', 'chocolate', 'bolo', 'torta']);
+const stem = (w) => w.slice(0, Math.max(4, w.length - 1)).replace(/[^a-z0-9]/g, '');
+const wordRe = (w) => (/^\d+$/.test(w) ? w : `${stem(singular(w))}[a-z]*`);
+const productRe = new WeakMap();
+function productPatterns(products) {
+  if (productRe.has(products)) return productRe.get(products);
+  const parts = products.map((p) => {
+    const tokens = norm(p.name).split(/[^a-z0-9]+/).filter((w) => w && !STOP.has(w));
+    if (!tokens.length || (!/^\d+$/.test(tokens[0]) && tokens[0].length < 4)) return null;
+    const src = !GENERIC.has(singular(tokens[0])) || tokens.length === 1 ? wordRe(tokens[0])
+      : `${wordRe(tokens[0])}(?:\\s+[a-z0-9]+){0,2}?\\s+(?:${tokens.slice(1).map(wordRe).join('|')})`;
+    return { p, src, re: new RegExp(`\\b${src}\\b`) };
+  }).filter(Boolean);
+  const out = { parts, src: parts.length ? `(?:${parts.map((x) => x.src).join('|')})\\b` : '(?!)' };
+  productRe.set(products, out);
+  return out;
+}
+const productPattern = (products) => productPatterns(products).src;
+const clean = (t) => amounts(t.replace(/[^a-z0-9#]+/g, ' ').trim()); // sem pontuação nem emoji
+// Produto citado na mensagem com a mesma regra da identificação ("caixinha de leite" não conta).
+const mentionedProduct = (text, products) => productPatterns(products).parts.find((x) => x.re.test(clean(norm(text))))?.p || null;
+
+const GREETING = /^(?:(?:oi+e?|ola|opa|bom dia|boa tarde|boa noite|e ai|eai|hey|tudo bem|td bem|tudo bom|cris|moca|amiga|gente)\s*)+/;
+const POLITE = '(?: (?:por favor|pf|pfv|pfvr|com voces?|com vcs?|ai|aqui|hoje|amanha|pra (?:hoje|amanha|sabado|domingo|sexta)))*';
+const KEYWORD = new RegExp(`^(?:#(?:pedido|cardapio|menu)\\b.*|(?:(?:ver|o|abre|abrir|mostra|mostrar|manda|mande|envia|envie|me (?:manda|mande|envia|envie|passa|passe|mostra)(?: o)?|qual (?:e )?o|quero ver o|queria ver o|tem) )?(?:menu|cardapio)(?: (?:de voces|da loja|dos doces|de doces|completo))?${POLITE})$`);
+export const UNSUBSCRIBE = /\b(?:parar|pare|para de|sair|cancelar|cancela|descadastrar|descadastra|remover|remove|tirar|tira|chega de|nao (?:quero|desejo) mais(?: receber)?)\b(?:\s+[a-z]+){0,4}?\s+novidades\b/;
+const SUBSCRIBE = /^(?:quero|queria|gostaria de) receber (?:as )?novidades(?: (?:por aqui|aqui|de voces))?$/;
+const QTY_SHORT = '(?:\\d{1,3}x?|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze|vinte|trinta|cinquenta|cem)';
+const VERB = '(?:quero|queria|gostaria|vou querer|preciso(?: de)?|me ve|separa|reserva|encomendar|encomendo|pedir|faz|fazem|faria|fariam|tem como fazer|da pra fazer|consegue fazer|conseguem fazer)';
+const PRICE = '(?:quanto (?:custa|custam|e|sai|saem|fica|ficam|ta|esta|cobra|cobram)|qual (?:e )?o (?:valor|preco)|valor|preco|precos)';
+const WANT = '(?:quero|queria|gostaria de|preciso|posso|vou querer|como (?:eu )?faco (?:para|pra)|da pra|tem como)';
+const WHEN = '(?:pra|para|pro) (?:o |a )?(?:dia|sabado|domingo|segunda|terca|quarta|quinta|sexta|semana|mes|festa|aniversario|formatura|evento|cha|amanha|hoje|\\d)';
+const PRICE_Q = /\b(?:quanto (?:custa|custam|e|sai|saem|fica|ficam|ta|esta|cobra|cobram)|valor|preco|precos)\b/;
 
 export function detectIntent(text, products) {
   const t = norm(text);
-  if (EXPLICIT.some((re) => re.test(t))) return 'explicit';
-  // "Brigadeiro", "Empadinha de Frango..." → só a primeira palavra conta ("1 kg de frango" não é pedido)
-  const heads = products.map((p) => singular(norm(p.name).split(/[^a-z0-9]+/)[0] || '')).filter((h) => h.length > 3);
-  const isHead = (w) => heads.some((h) => w.startsWith(h.slice(0, Math.max(4, h.length - 1))));
-  const words = t.replace(/\b(uma? )?duzias? de\b/g, '12 ').split(/[^a-z0-9]+/).filter(Boolean);
-  for (let i = 0; i < words.length - 1; i++) {
-    const qty = /^\d{1,3}x?$/.test(words[i]) || QTY_WORDS.has(words[i]);
-    const next = words[i + 1] === 'x' ? words[i + 2] : words[i + 1];
-    if (qty && next && isHead(next)) return 'order';
-  }
-  if (ASK_WORDS.test(t) && words.some(isHead)) return 'order';
+  const c = clean(t);
+  const body = c.replace(GREETING, '').trim(); // sem "oi, tudo bem?" no começo
+  if (UNSUBSCRIBE.test(c)) return 'unsubscribe';
+  if (KEYWORD.test(body)) return 'keyword';
+  if (SUBSCRIBE.test(body)) return 'subscribe';
+  if (/\bvim pelo site\b.*\bencomenda\b/.test(c) || /\bpedido\b.*\bdd-[a-z0-9]{4}\b/.test(t)) return 'site';
+  const P = productPattern(products);
+  const order = [
+    // "quero fazer uma encomenda", "... pra sábado", "... de brigadeiros"; "um pedido no mercado" não
+    new RegExp(`^${WANT} (?:fazer (?:um |uma )?(?:pedido|encomenda)s?|encomendar|pedir)(?:${POLITE}$| (?:${WHEN}|(?:de |com )?(?:doces?|docinhos?|salgados?|${P})|com (?:voces?|vcs?)))`),
+    new RegExp(`^(?:voces|vcs|vc|voce) (?:fazem|aceitam|pegam|estao aceitando|ainda aceitam) (?:encomendas?|pedidos?)${POLITE}$`),
+    new RegExp(`\\b${VERB}(?:\\s+[a-z0-9]+){0,3}?\\s+${P}`),
+    new RegExp(`\\b${PRICE}(?:\\s+[a-z0-9]+){0,2}?\\s+${P}`),
+    new RegExp(`\\b${P}(?:\\s+[a-z0-9]+)?\\s+(?:custa|custam|sai|saem|fica|ficam|e|ta|esta) quanto\\b`),
+  ];
+  if (order.some((re) => re.test(body))) return 'order';
+  // mensagem curta que já começa pelo pedido: "10 brigadeiros", "2 casadinhos e 3 brigadeiros por favor"
+  if (body.split(' ').length <= 8 && new RegExp(`^${QTY_SHORT}\\s*x?\\s+${P}`).test(body)) return 'order';
   return null;
 }
 
-const ACK = /^(?:obrigad|brigad|valeu|vlw|ok\b|okay|beleza|blz|show|top|perfeito|otimo|joia|massa|👍|🙏|❤|♥|😘|🥰)/;
+// "obrigada", "ok", "show de bola", 👍: agradecimento solto não repete o menu
+const ACK = /^(?:(?:obrigad[oa]s?|brigad[oa]|valeu|vlw|ok|okay|beleza|blz|show|top|perfeito|otimo|joia|massa|certo|combinado|amei)(?: [a-z]+){0,2}|[\p{Extended_Pictographic}♥❤️\s]+)[!.\s]*$/u;
 
 // O WhatsApp às vezes guarda celulares antigos sem o 9 (55 11 8888-7777); o site sempre grava com o 9.
-export const samePhone = (a, b) => {
-  const k = (p) => { let d = String(p || '').replace(/\D/g, '').replace(/^55/, ''); if (d.length === 11) d = d.slice(0, 2) + d.slice(3); return d; };
-  return !!a && k(a) === k(b);
+// Só celular (8 dígitos começando com 6 a 9) ganha o 9: fixo e número estrangeiro ficam como estão.
+const brKey = (p) => {
+  const d = String(p || '').replace(/\D/g, '');
+  if (!/^55\d{10,11}$/.test(d)) return d;
+  const n = d.slice(2);
+  return n.length === 10 && /[6-9]/.test(n[2]) ? `55${n.slice(0, 2)}9${n.slice(2)}` : d;
 };
+export const samePhone = (a, b) => !!a && !!b && brKey(a) === brKey(b);
 
 const cartText = (cart) => cart.map((it) => `• ${it.qty}x ${it.name}: ${brl(it.qty * it.price)}`).join('\n');
 const cartTotal = (cart) => cart.reduce((s, it) => s + it.qty * it.price, 0);
@@ -174,20 +219,22 @@ export async function handleMessage(msg, ctx) {
   const save = (next) => ctx.saveSession(phone, next);
 
   if (['menu', 'oi', 'ola', 'oie', 'bom dia', 'boa tarde', 'boa noite', 'inicio', 'voltar'].includes(t)) {
-    await save({ state: 'menu', cart: s.cart || [] });
+    await save({ state: 'menu', cart: s.cart || [], menuShown: true });
     return [menuText(settings, msg.profileName)];
   }
   if (['cancelar', 'sair', 'parar'].includes(t)) {
     await save(null);
     return ['Tudo bem, cancelei por aqui. Quando bater a vontade, é só mandar *oi* 💛'];
   }
-  if (/\breceber(?: as)? novidades\b/.test(t)) {
+  const kind = detectIntent(text, products);
+  if (kind === 'unsubscribe') {
+    // false = a pessoa nem estava inscrita: fica quieto (pode ser só conversa)
+    const was = await ctx.subscribe(phone, msg.profileName, false);
+    return was === false ? [] : ['Ok, não vou mais enviar novidades. 💛'];
+  }
+  if (kind === 'subscribe') {
     await ctx.subscribe(phone, msg.profileName, true);
     return ['Pronto! 🔔 Você vai receber nossas novidades por aqui. Para sair, mande *parar novidades*.'];
-  }
-  if (/\bparar(?: as)? novidades\b/.test(t)) {
-    await ctx.subscribe(phone, msg.profileName, false);
-    return ['Ok, não vou mais enviar novidades. 💛'];
   }
 
   // Mensagem pronta do site depois de pedir ("Acabei de fazer o pedido DD-XXXX"): o pedido já existe,
@@ -219,28 +266,38 @@ export async function handleMessage(msg, ctx) {
 
   switch (s.state) {
     case 'menu': {
-      if (t === '1') {
+      // "1", ou "ok, quero o 1" em mensagem curta
+      const choice = /^[1-5]$/.test(t) ? t : t.split(/\s+/).length <= 5 ? t.match(/(?:^|\s)([1-5])(?=$|[\s!.?,])/)?.[1] : undefined;
+      if (choice === '1') {
         await save({ ...s, state: 'product' });
         return [`O que vai ser? Mande o *número* do produto:\n\n${catalogText(products)}`];
       }
-      if (t === '2' || /\bcardapio\b/.test(t)) {
+      // "brigadeiro", "quanto custa o brigadeiro?": já pergunta a quantidade
+      const mp = !choice && mentionedProduct(text, products);
+      if (mp) {
+        await save({ ...s, state: 'qty', pending: mp.id, menuShown: true });
+        return [`*${mp.name}*: ${brl(mp.price)} cada.\nQuantas unidades? Mande só o número, tipo *10* (ou *menu* para ver as opções).`];
+      }
+      if (choice === '2' || /\bcardapio\b/.test(t) || PRICE_Q.test(t)) {
         return [`📋 *Cardápio*\n\n${products.map((p) => `*${p.name}*: ${brl(p.price)}\n_${p.description || ''}_`).join('\n\n')}\n\nMande *1* para encomendar.`];
       }
-      if (t === '3') {
+      if (choice === '3') {
         const news = (await ctx.listNews()).slice(0, 3);
         if (!news.length) return ['Ainda não temos novidades, mas vem coisa boa por aí 👀'];
         return [news.map((n) => `✨ *${n.title}*\n${n.body}`).join('\n\n') + '\n\nMande *1* para encomendar.'];
       }
-      if (t === '4') {
+      if (choice === '4') {
         await ctx.subscribe(phone, msg.profileName, true);
         return ['Pronto! 🔔 Você vai receber nossas novidades por aqui. Para sair, mande *parar novidades*.'];
       }
-      if (t === '5') {
+      if (choice === '5') {
         await save({ ...s, state: 'human' });
         await ctx.notifyHuman?.(phone, msg.profileName);
         return ['Chamei a Cris! Ela responde assim que sair do forno 👩‍🍳 (para voltar ao menu, mande *menu*)'];
       }
-      if (ACK.test(t)) return []; // "obrigada", "ok"… não repete o menu
+      // menu no máximo uma vez por conversa; agradecimento ou mensagem solta depois disso: silêncio
+      if (ACK.test(t) || s.menuShown) return [];
+      await save({ ...s, state: 'menu', cart: s.cart || [], menuShown: true });
       return [menuText(settings, msg.profileName)];
     }
 
@@ -269,8 +326,9 @@ export async function handleMessage(msg, ctx) {
     }
 
     case 'name': {
-      const name = t === '1' && msg.profileName ? msg.profileName : text;
-      if (name.length < 2 || /^\d+$/.test(name)) return ['Me diz seu *nome*, por favor 🙂'];
+      const name = (t === '1' && msg.profileName ? msg.profileName : text).trim();
+      const size = [...name].length; // emoji conta como 1, igual ao banco (nome de 2 a 80 letras)
+      if (size < 2 || size > 80 || /^\d+$/.test(name)) return ['Me diz seu *nome*, por favor 🙂'];
       const next = { ...s, state: 'confirm', name };
       await save(next);
       return [confirmText(next)];
@@ -298,7 +356,7 @@ export async function handleMessage(msg, ctx) {
     }
 
     default:
-      await save({ state: 'menu', cart: [] });
+      await save({ state: 'menu', cart: [], menuShown: true });
       return [menuText(settings, msg.profileName)];
   }
 }

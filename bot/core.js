@@ -2,52 +2,53 @@
 //   - só entra na conversa com mensagem identificada como encomenda (detectIntent no motor);
 //   - depois de entrar, segue a conversa até 30 min sem resposta;
 //   - se alguém da loja responde pelo celular, fica 12 h quieto com aquela pessoa
-//     (palavra-chave como "menu" ou "cardápio" chama o bot de volta);
+//     ("menu", "cardápio" ou "#pedido" chamam o bot de volta; "parar novidades" funciona sempre);
 //   - em grupo, só com #pedido (o motor continua a conversa no privado).
 // Sem Baileys nem Supabase aqui: index.js liga isso ao WhatsApp e core.test.js testa com dados falsos.
 import { handleMessage, detectIntent } from '../supabase/functions/_shared/bot-engine.js';
 
 export const SESSION_TTL_MS = 30 * 60e3;
 export const PAUSE_TTL_MS = 12 * 3600e3;
+const PAUSE_REFRESH_MS = 10 * 60e3; // pausa já gravada há menos de 10 min não é regravada
 
 const isPaused = (s) => s?.state === 'human';
 
 // ctx: adaptador de dados do motor (listProducts, placeOrder, ...)
 // sessions: { get(phone) -> { data, updated_at } | null, save(phone, data | null) }
 export function createCore({ ctx, sessions, now = () => Date.now(), log = console.error }) {
+  const age = (row) => now() - new Date(row.updated_at).getTime();
+
   async function loadSession(phone) {
     const row = await sessions.get(phone);
     if (!row?.data) return null;
-    const ttl = isPaused(row.data) ? PAUSE_TTL_MS : SESSION_TTL_MS;
-    return now() - new Date(row.updated_at).getTime() < ttl ? row.data : null;
+    return age(row) < (isPaused(row.data) ? PAUSE_TTL_MS : SESSION_TTL_MS) ? row.data : null;
   }
 
   const isAdminCommand = async (phone, text) => text.startsWith('#') && !/^#pedido\b/i.test(text) && !!(await ctx.isAdmin(phone));
 
   // 'pass' = vai para o motor · 'resume' = tira da pausa e vai para o motor · null = silêncio
-  async function decide({ phone, text, isGroup }, session) {
-    if (isGroup) {
-      if (!text.startsWith('#')) return null;
-      return isPaused(session) && /^#pedido\b/i.test(text) ? 'resume' : 'pass';
-    }
-    const intent = detectIntent(text, await ctx.listProducts());
+  async function decide({ phone, text, isGroup }, session, kind) {
+    if (isGroup) return isPaused(session) && /^#pedido\b/i.test(text) ? 'resume' : 'pass';
     if (isPaused(session)) {
-      if (intent === 'explicit') return 'resume';
+      if (kind === 'keyword') return 'resume';
+      if (kind === 'unsubscribe') return 'pass';
       return (await isAdminCommand(phone, text)) ? 'pass' : null;
     }
-    if (session || intent) return 'pass';
+    if (session || kind) return 'pass';
     return (await isAdminCommand(phone, text)) ? 'pass' : null;
   }
 
   // msg: { phone, text, profileName, isGroup } → respostas a enviar (vazio = não responder)
   async function handleIncoming(msg) {
     const text = String(msg.text || '').trim();
+    if (msg.isGroup && !text.startsWith('#')) return []; // grupo: nem consulta o banco
     let session = await loadSession(msg.phone);
     if (!text) {
       // áudio, figurinha, foto sem legenda: só avisa quem está no meio de um pedido
-      return !msg.isGroup && session && !isPaused(session) ? ['Por enquanto eu só entendo texto 🙈 Mande *menu* para ver as opções.'] : [];
+      return session && !isPaused(session) ? ['Por enquanto eu só entendo texto 🙈 Mande *menu* para ver as opções.'] : [];
     }
-    const decision = await decide({ ...msg, text }, session);
+    const kind = msg.isGroup ? null : detectIntent(text, await ctx.listProducts());
+    const decision = await decide({ ...msg, text }, session, kind);
     if (!decision) return [];
     if (decision === 'resume') {
       session = null;
@@ -62,8 +63,10 @@ export function createCore({ ctx, sessions, now = () => Date.now(), log = consol
     };
     try {
       const replies = await handleMessage({ ...msg, text }, engineCtx);
-      // Respondeu sem mudar de etapa (menu, cardápio…): a conversa continua valendo por mais 30 min.
-      if (replies.length && !saved && !msg.isGroup) await sessions.save(msg.phone, session || { state: 'menu', cart: [] });
+      // Respondeu sem mudar de etapa (cardápio, novidades…): a conversa continua valendo por mais 30 min.
+      // Comando de administradora e entrada/saída das novidades não abrem conversa.
+      const keepOpen = replies.length && !saved && kind !== 'subscribe' && kind !== 'unsubscribe' && !(await isAdminCommand(msg.phone, text));
+      if (keepOpen) await sessions.save(msg.phone, session || { state: 'menu', cart: [] });
       return replies;
     } catch (e) {
       log(e);
@@ -72,7 +75,13 @@ export function createCore({ ctx, sessions, now = () => Date.now(), log = consol
   }
 
   // Alguém da loja respondeu pelo celular: o bot sai da conversa com essa pessoa.
-  const pause = (phone) => sessions.save(phone, { state: 'human', cart: [] });
+  // Devolve true quando gravou a pausa.
+  async function pause(phone) {
+    const row = await sessions.get(phone);
+    if (isPaused(row?.data) && age(row) < PAUSE_REFRESH_MS) return false;
+    await sessions.save(phone, { state: 'human', cart: [] });
+    return true;
+  }
 
   return { handleIncoming, pause, loadSession };
 }

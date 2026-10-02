@@ -71,9 +71,11 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 
 **Quando o bot responde** (o número da loja também é de uso pessoal; regras em `bot/core.js`, testes em `bot/core.test.js`, `npm test`):
 
-- Só mensagens identificadas como encomenda: `menu`, `cardápio`, `#pedido`, os botões do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX", "Quero receber as novidades") ou o pedido escrito com produto e quantidade ("quero 10 brigadeiros e 2 empadinhas"). Conversas pessoais ficam sem resposta automática.
-- Depois de entrar na conversa, segue até o pedido terminar ou até 30 min sem resposta.
-- Se alguém da loja responder pelo celular, o bot fica 12 h quieto com aquela pessoa; `menu` ou `cardápio` chamam o bot de volta.
+- Só mensagens identificadas como encomenda: `menu`, `cardápio` ou `#pedido` (a mensagem inteira, como "me manda o cardápio"), os botões do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX", "Quero receber as novidades") ou o pedido escrito: verbo de pedido perto do produto ("quero 10 brigadeiros"), pergunta de preço ("quanto custa o brigadeiro?") ou mensagem curta que começa pela quantidade ("10 brigadeiros"). Conversas pessoais ficam sem resposta automática, mesmo citando doces ("comi 2 brigadeiros da festa", "comprei caixinhas de leite").
+- Palavras comuns do nome de um produto só contam junto do resto do nome: "caixinha de docinhos", "morango cravejado".
+- Depois de entrar na conversa, segue até o pedido terminar ou até 30 min sem resposta. O menu completo aparece no máximo uma vez por conversa.
+- Se alguém da loja responder pelo celular, o bot fica 12 h quieto com aquela pessoa; só `menu`, `cardápio` ou `#pedido` chamam o bot de volta. Pedido para sair das novidades ("parar de receber novidades") funciona sempre.
+- Mensagens que chegam com o bot desligado não recebem resposta atrasada (ficam para a loja responder pelo celular).
 - A mensagem do site com o código do pedido só confirma o pedido (que já foi gravado pelo site) e não cria outro.
 - Grupos: só mensagens que começam com `#pedido`; a conversa continua no privado.
 

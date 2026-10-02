@@ -3,27 +3,42 @@
 #   ./instalar-servico-mac.sh            instala/atualiza
 #   ./instalar-servico-mac.sh remover    desinstala
 # Antes: npm install e a Secret key do Supabase no arquivo .env.
-# Se o WhatsApp ainda não estiver conectado, o QR Code aparece no painel (aba Bot WhatsApp) e em bot.log.
+# Se o WhatsApp ainda não estiver conectado, o QR Code aparece no painel (aba Bot WhatsApp).
+# Pode rodar por ssh, desde que o mesmo usuário esteja logado na tela do Mac.
 set -euo pipefail
 
 LABEL=com.umdoce.bot
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DOMAIN="gui/$(id -u)"
 
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
+stop() {
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+  for _ in $(seq 1 20); do loaded || return 0; sleep 0.5; done # espera o bot antigo terminar de sair
+}
 
 if [ "${1:-}" = "remover" ]; then
+  stop
   rm -f "$PLIST"
   echo "Bot removido do início automático."
   exit 0
 fi
 
+# Confere tudo antes de mexer no serviço que está rodando.
 NODE="$(command -v node || true)"
-[ -n "$NODE" ] || { echo "Node.js não encontrado. Instale em https://nodejs.org"; exit 1; }
+[ -n "$NODE" ] || { echo "Node.js não encontrado no PATH. Instale em https://nodejs.org ou rode: PATH=/caminho/do/node/bin:\$PATH $0"; exit 1; }
 [ -d "$DIR/node_modules" ] || { echo "Rode 'npm install' na pasta bot antes."; exit 1; }
 [ -f "$DIR/.env" ] || { echo "Falta o arquivo bot/.env (copie de .env.example e preencha)."; exit 1; }
-grep -Eq '^SUPABASE_SECRET_KEY=.+' "$DIR/.env" || { echo "Cole a Secret key do Supabase em SUPABASE_SECRET_KEY no arquivo bot/.env."; exit 1; }
+grep -Eq '^SUPABASE_SECRET_KEY=(sb_secret_|eyJ).+' "$DIR/.env" || { echo "Cole a Secret key do Supabase (sb_secret_...) em SUPABASE_SECRET_KEY no arquivo bot/.env. A publishable não serve."; exit 1; }
+launchctl print "$DOMAIN" >/dev/null 2>&1 || { echo "Faça login na tela do Mac com este usuário e rode de novo (o serviço roda na sessão dele)."; exit 1; }
 
+# Sessão do WhatsApp, chave e log só para o próprio usuário.
+chmod 600 "$DIR/.env"
+if [ -d "$DIR/auth" ]; then chmod -R go-rwx "$DIR/auth"; fi
+touch "$DIR/bot.log" && chmod 600 "$DIR/bot.log"
+
+stop
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -46,6 +61,13 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "✅ Bot instalado. Ele liga sozinho no login e reinicia se cair."
-echo "   Para conectar o WhatsApp: painel → Bot WhatsApp (QR Code), ou veja o QR em: tail -f \"$DIR/bot.log\""
+for _ in 1 2 3; do
+  if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
+    echo "✅ Bot instalado. Ele liga sozinho no login e reinicia se cair."
+    echo "   Para conectar o WhatsApp: painel → Bot WhatsApp (QR Code). Log: tail -f \"$DIR/bot.log\""
+    exit 0
+  fi
+  sleep 2
+done
+echo "Não consegui ligar o serviço. Tente de novo em alguns segundos: $0"
+exit 1

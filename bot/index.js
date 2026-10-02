@@ -6,14 +6,16 @@
 //
 // O QR Code aparece no terminal e no painel (aba Bot WhatsApp). Quando o bot responde
 // e quando fica quieto está em core.js. A sessão do WhatsApp fica em ./auth.
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import makeWASocket, { Browsers, DisconnectReason, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import { createClient } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
 import pino from 'pino';
 import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engine.js';
-import { createCore } from './core.js';
+import { createCore, PAUSE_TTL_MS } from './core.js';
+
+process.umask(0o077); // sessão do WhatsApp, log e trava só legíveis pelo próprio usuário
 
 const env = (k, d = '') => process.env[k] ?? d;
 for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) {
@@ -24,8 +26,7 @@ const SITE_URL = env('SITE_URL');
 const OWNER_PHONE = env('OWNER_PHONE').replace(/\D/g, '');
 const AUTH_DIR = new URL('./auth', import.meta.url).pathname;
 const TICK_MS = 30_000;
-const CATCH_UP_MS = 15 * 60e3; // ao voltar do ar, responde o que chegou nos últimos 15 min
-const PAUSE_WRITE_MS = 10 * 60e3; // grava a pausa no máximo a cada 10 min por conversa
+const LOCK = new URL('./bot.pid', import.meta.url).pathname;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const digits = (jid) => (jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
@@ -36,7 +37,6 @@ let sock;
 let online = false;
 let attempt = 0;
 const sentIds = new Set(); // mensagens do próprio bot: não contam como "alguém respondeu pelo celular"
-const pausedAt = new Map();
 let queue = Promise.resolve();
 
 async function sendText(jid, text) {
@@ -90,8 +90,9 @@ const ctx = {
   isAdmin: async (phone) => ((await db.from('bot_admins').select('*')).data ?? []).find((a) => samePhone(a.phone, phone)) || null,
   listNews: async () => (await db.from('news').select('*').eq('published', true).order('created_at', { ascending: false }).limit(3)).data ?? [],
   subscribe: async (phone, name, on) => {
-    if (on) await db.from('subscribers').upsert({ phone, name });
-    else await db.from('subscribers').delete().eq('phone', phone);
+    if (on) return void (await db.from('subscribers').upsert({ phone, name }));
+    const { data } = await db.from('subscribers').delete().eq('phone', phone).select('phone');
+    return !!data?.length; // false: a pessoa nem estava inscrita
   },
   placeOrder: async (o) => {
     const { data, error } = await db.rpc('place_order', { p_name: o.customer_name, p_phone: o.phone, p_items: o.items, p_channel: o.channel, p_notes: '' });
@@ -188,17 +189,18 @@ async function onMessage(m, type) {
 
   if (key.fromMe) {
     // Alguém da loja escreveu pelo celular (ou WhatsApp Web): o bot sai dessa conversa por 12 h.
-    // O que o próprio bot envia chega como 'append'; só 'notify' veio de outro aparelho.
-    if (type !== 'notify' || isGroup || sentIds.has(key.id)) return;
+    // O que o próprio bot envia volta como 'append' com um id que ele guardou; o que foi digitado
+    // no celular chega como 'notify' (ou 'append', se o bot estava fora do ar na hora).
+    if (isGroup || sentIds.has(key.id)) return;
+    if (type !== 'notify' && !(Date.now() - tsMs(m.messageTimestamp) < PAUSE_TTL_MS)) return;
     const phone = await pnOf(jid, key.remoteJidAlt);
     if (!phone || phone === digits(sock.user?.id)) return;
-    if (Date.now() - (pausedAt.get(phone) || 0) < PAUSE_WRITE_MS) return;
-    pausedAt.set(phone, Date.now());
-    await core.pause(phone);
-    log(`bot pausado com +${phone}: resposta pelo celular`);
+    if (await core.pause(phone)) log(`bot pausado com +${phone}: resposta pelo celular`);
     return;
   }
-  if (type !== 'notify' && !(Date.now() - tsMs(m.messageTimestamp) <= CATCH_UP_MS)) return;
+  // Mensagem de cliente que chegou com o bot fora do ar: fica para a pessoa da loja (ela vê no celular),
+  // sem resposta atrasada que pode atropelar o que já foi combinado por lá.
+  if (type !== 'notify') return;
 
   const text = textOf(content).trim();
   const phone = await pnOf(isGroup ? key.participant : jid, isGroup ? key.participantAlt : key.remoteJidAlt);
@@ -217,8 +219,12 @@ async function onMessage(m, type) {
 function onConnection({ connection, lastDisconnect, qr }) {
   if (qr) {
     attempt = 0;
-    console.log('\nNo celular da loja: WhatsApp → Aparelhos conectados → Conectar um aparelho → escaneie (também aparece no painel):\n');
-    qrcodeTerminal.generate(qr, { small: true });
+    if (process.stdout.isTTY) {
+      console.log('\nNo celular da loja: WhatsApp → Aparelhos conectados → Conectar um aparelho → escaneie (também aparece no painel):\n');
+      qrcodeTerminal.generate(qr, { small: true });
+    } else if (status.state !== 'qr') {
+      log('Aguardando conexão: o QR Code está no painel (aba Bot WhatsApp).'); // serviço: não desenha o QR no bot.log
+    }
     QRCode.toDataURL(qr, { margin: 1, width: 320 })
       .then((url) => setStatus({ state: 'qr', qr: url }))
       .catch((e) => console.error('erro ao gerar QR Code', e.message));
@@ -261,10 +267,24 @@ async function start() {
   });
 }
 
-// Confere a chave antes de conectar: com a chave errada o bot não grava pedidos.
-const check = await db.from('settings').select('key').limit(1);
+// Uma cópia só: duas usando a mesma sessão do WhatsApp se derrubam (por exemplo, npm start com o serviço ligado).
+try {
+  const other = Number(readFileSync(LOCK, 'utf8'));
+  if (other && other !== process.pid) {
+    process.kill(other, 0); // dá erro se esse processo não existe mais
+    console.error(`Outra cópia do bot já está rodando (pid ${other}). Pare o serviço antes: ./instalar-servico-mac.sh remover`);
+    process.exit(1);
+  }
+} catch (e) {
+  if (e.code === 'EPERM') { console.error('Outra cópia do bot já está rodando.'); process.exit(1); }
+}
+writeFileSync(LOCK, String(process.pid));
+process.on('exit', () => { try { if (Number(readFileSync(LOCK, 'utf8')) === process.pid) rmSync(LOCK); } catch {} });
+
+// Confere a chave antes de conectar: a publishable (do site) não grava pedidos nem o status do bot.
+const check = await db.auth.admin.listUsers({ perPage: 1 });
 if (check.error) {
-  console.error('Não consegui acessar o Supabase. Confira SUPABASE_SECRET_KEY no arquivo .env:', check.error.message);
+  console.error('A chave do .env não é a Secret key do Supabase (ou está errada). Confira SUPABASE_SECRET_KEY:', check.error.message);
   process.exit(1);
 }
 if ((await db.from('news').select('wa_sent_at').limit(1)).error?.code === '42703') {
@@ -273,6 +293,7 @@ if ((await db.from('news').select('wa_sent_at').limit(1)).error?.code === '42703
 }
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
+    await Promise.race([queue, sleep(10e3)]); // termina a mensagem em andamento (um pedido sendo gravado)
     await setStatus({ state: 'desligado', qr: null }).catch(() => {});
     process.exit(0);
   });

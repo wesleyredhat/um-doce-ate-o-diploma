@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCore, SESSION_TTL_MS, PAUSE_TTL_MS } from './core.js';
-import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engine.js';
+import { detectIntent, parseQuickOrder, samePhone } from '../supabase/functions/_shared/bot-engine.js';
 
 const PRODUCTS = [
   { id: 'p1', name: 'Brigadeiro', category: 'doces', price: 4, cost: 1.35, active: true },
@@ -14,11 +14,11 @@ const PRODUCTS = [
 const ANA = '5511988887777';
 const CRIS = '5511941776869';
 
-function setup({ admins = [], failOrder = false } = {}) {
+function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
   let clock = Date.parse('2026-10-02T12:00:00Z');
   const rows = new Map();
   const orders = [];
-  const subs = new Set();
+  const subs = new Set(subscribed);
   const news = [];
   const sessions = {
     get: async (phone) => rows.get(phone) ?? null,
@@ -32,7 +32,8 @@ function setup({ admins = [], failOrder = false } = {}) {
     getSettings: async () => ({ pix_key: 'pix@doce.com' }),
     isAdmin: async (phone) => admins.find((a) => samePhone(a.phone, phone)) || null,
     listNews: async () => [],
-    subscribe: async (phone, _name, on) => (on ? subs.add(phone) : subs.delete(phone)),
+    // igual ao bot: ao sair, diz se a pessoa estava inscrita
+    subscribe: async (phone, _name, on) => (on ? void subs.add(phone) : subs.delete(phone)),
     placeOrder: async (o) => {
       if (failOrder) throw new Error('banco fora do ar');
       orders.push(o);
@@ -54,22 +55,43 @@ test('mensagens pessoais ficam sem resposta', async () => {
     'Oi filha, tudo bem?', 'oi', 'bom dia', 'kkkkk', 'Pega 1 kg de frango no mercado', 'fiz um pedido no ifood',
     'chegou a encomenda?', 'vou fazer um pedido de pizza', 'comi um brigadeiro', 'tô chegando em 5 min',
     'obrigada!', 'vou encomendar na amazon', '#tbt', 'qual o menu do jantar hoje?',
+    // frases que a revisão mostrou que disparavam o bot
+    'Compra 2 caixinhas de creme de leite pra mim?', 'Comprei 4 caixinhas de leite condensado', 'Quanto deu a caixinha do churrasco?',
+    'Quanto tá o morango na feira?', 'Comi 2 brigadeiros da festa, tava divino!', 'sobrou 10 brigadeiros da festa',
+    'Quanto tempo de Uber até a Brigadeiro?', 'comprei 6 empadinhas na padaria', 'Qual o cardápio do jantar hoje?',
+    'Preciso fazer um pedido no mercado, quer algo?', 'Quero fazer um pedido de pizza hoje', 'queria encomendar as flores do casamento',
+    'O menu do almoço de domingo vai ser lasanha', 'Amiga, todo mundo amou o brigadeiro. Quero te ver logo!',
+    'Assim que eu receber novidades do médico te aviso', 'Te amo, beijo', 'parar de receber novidades',
   ];
   for (const text of personal) {
-    const { say, rows } = setup();
+    const { say, rows, subs } = setup();
     assert.deepEqual(await say(text), [], `não devia responder: "${text}"`);
     assert.equal(rows.size, 0, `não devia abrir conversa: "${text}"`);
+    assert.equal(subs.size, 0, `não devia inscrever: "${text}"`);
   }
+});
+
+test('mãe manda mensagem com "caixinhas": nada de pedido gravado', async () => {
+  const { say, orders } = setup();
+  for (const text of ['Comprei 4 caixinhas de leite condensado', 'Que pedido?? kkkk', '1']) assert.deepEqual(await say(text), []);
+  assert.equal(orders.length, 0);
 });
 
 test('identifica mensagens de encomenda', () => {
   const cases = {
-    menu: 'explicit', 'Menu': 'explicit', 'me manda o cardápio': 'explicit', '#pedido 6 casadinhos': 'explicit',
-    'Oi! Vim pelo site e quero fazer uma encomenda 🍫': 'explicit', 'Oi! Quero receber as novidades por aqui 🔔': 'explicit',
-    'parar novidades': 'explicit', 'queria fazer uma encomenda': 'explicit', 'Oi! Acabei de fazer o pedido *DD-K7P2* pelo site 🎓': 'explicit',
+    menu: 'keyword', 'Menu': 'keyword', 'Oi, tudo bem? Me manda o cardápio por favor': 'keyword', 'cardápio': 'keyword',
+    'qual o cardápio de vocês?': 'keyword', '#pedido 6 casadinhos': 'keyword', '#pedido': 'keyword',
+    'Oi! Vim pelo site e quero fazer uma encomenda 🍫': 'site', 'Oi! Acabei de fazer o pedido *DD-K7P2* pelo site 🎓': 'site',
+    'Oi! Quero receber as novidades por aqui 🔔': 'subscribe',
+    'parar novidades': 'unsubscribe', 'Não quero mais receber novidades': 'unsubscribe', 'quero parar de receber as novidades': 'unsubscribe',
+    'me tira das novidades': 'unsubscribe',
+    'queria fazer uma encomenda': 'order', 'Gostaria de fazer uma encomenda para o dia 15': 'order', 'quero fazer um pedido pra sábado': 'order',
+    'vocês fazem encomenda?': 'order', 'como faço pra encomendar?': 'order',
     'quero 10 brigadeiros e 2 empadinhas': 'order', '10x brigadeiro': 'order', 'tem como fazer 50 brigadeiros pra sábado?': 'order',
-    'quanto custa o brigadeiro?': 'order', 'quero uma caixinha': 'order', 'uma duzia de casadinhos': 'order',
-    'oi tudo bem': null, 'comprei 3 caixas de leite': null, 'faz 1 frango assado': null,
+    'quanto custa o brigadeiro?': 'order', 'Brigadeiro custa quanto?': 'order', 'qual o valor do casadinho': 'order',
+    'quero uma caixinha de docinhos': 'order', '2 morangos cravejados': 'order', 'uma duzia de casadinhos': 'order',
+    'meia dúzia de brigadeiros': 'order', 'preciso de 50 casadinhos pra sexta': 'order',
+    'oi tudo bem': null, 'comprei 3 caixas de leite': null, 'faz 1 frango assado': null, 'quero uma caixinha': null,
   };
   for (const [text, want] of Object.entries(cases)) assert.equal(detectIntent(text, PRODUCTS), want, text);
 });
@@ -88,15 +110,39 @@ test('"menu" abre o atendimento e o pedido completo chega na plataforma', async 
   assert.deepEqual(await say('obrigada!'), [], 'agradecimento depois do pedido não reabre o menu');
 });
 
-test('pedido escrito direto ("quero 10 brigadeiros e 2 empadinhas")', async () => {
+test('pedido escrito direto, com ponto final', async () => {
   const { say, orders } = setup();
-  const [r] = await say('Oi, quero 10 brigadeiros e 2 empadinhas');
+  const [r] = await say('Oi, quero 10 brigadeiros e 2 empadinhas.');
   assert.match(r, /10x Brigadeiro/);
   assert.match(r, /2x Empadinha/);
   await say('1'); // usa o nome do perfil
   await say('sim');
   assert.equal(orders.length, 1);
   assert.equal(orders[0].customer_name, 'Ana');
+});
+
+test('leitura de quantidades', () => {
+  const read = (t) => parseQuickOrder(t, PRODUCTS).map((x) => `${x.qty}x ${x.product.id}`).join(' ');
+  assert.equal(read('quero 10 brigadeiros e 2 empadinhas.'), '10x p1 2x p5');
+  assert.equal(read('um cento de brigadeiros!'), '100x p1');
+  assert.equal(read('meia dúzia de casadinhos'), '6x p2');
+  assert.equal(read('uma encomenda de brigadeiros'), '', '"uma encomenda" não é 1 brigadeiro');
+});
+
+test('no menu: produto citado, pergunta de preço, "ok, quero o 1", menu uma vez só', async () => {
+  const { say } = setup();
+  await say('menu');
+  assert.match((await say('brigadeiro'))[0], /Brigadeiro\*: R\$ 4,00 cada.*Quantas/s);
+  const b = setup();
+  await b.say('menu');
+  assert.match((await b.say('Brigadeiro custa quanto?'))[0], /R\$ 4,00 cada/);
+  const c = setup();
+  await c.say('menu');
+  assert.match((await c.say('Ok, quero o 1'))[0], /Mande o \*número\*/);
+  const d = setup();
+  await d.say('Oi! Vim pelo site e quero fazer uma encomenda 🍫');
+  assert.deepEqual(await d.say('como funciona?'), [], 'depois do primeiro menu, mensagem solta fica sem resposta');
+  assert.deepEqual(await d.say('obrigada'), []);
 });
 
 test('mensagem do site com código não duplica o pedido', async () => {
@@ -108,11 +154,16 @@ test('mensagem do site com código não duplica o pedido', async () => {
   assert.doesNotMatch(r, /Para quem é o pedido/);
   assert.equal(orders.length, 0);
   // celular antigo sem o 9 no WhatsApp: ainda reconhece que o pedido é da mesma pessoa
-  const [r2] = await setup().say(msg, '551188887777');
-  assert.match(r2, /10x Brigadeiro/);
+  assert.match((await setup().say(msg, '551188887777'))[0], /10x Brigadeiro/);
   // pedido de outra pessoa: não mostra os itens
-  const [r3] = await setup().say(msg, '5521999990000');
-  assert.doesNotMatch(r3, /Brigadeiro/);
+  assert.doesNotMatch((await setup().say(msg, '5521999990000'))[0], /Brigadeiro/);
+});
+
+test('telefones: celular antigo sem o 9 é o mesmo número; fixo e estrangeiro não', () => {
+  assert.ok(samePhone('5511988887777', '551188887777'));
+  assert.ok(!samePhone('5511941776869', '551141776869'), 'fixo 11 4177-6869 não é o celular 11 94177-6869');
+  assert.ok(!samePhone('5511941776869', '11941776869'));
+  assert.ok(!samePhone('', ''));
 });
 
 test('conversa parada há mais de 30 min expira', async () => {
@@ -126,13 +177,19 @@ test('conversa parada há mais de 30 min expira', async () => {
   assert.deepEqual(await say('3'), [], 'depois de 30 min parado, "3" é mensagem comum');
 });
 
-test('resposta pelo celular pausa o bot por 12 h; "menu" chama de volta', async () => {
+test('resposta pelo celular pausa o bot por 12 h; só menu, cardápio ou #pedido chamam de volta', async () => {
   const { core, say, tick } = setup();
   await say('quero 10 brigadeiros');
-  await core.pause(ANA);
+  assert.equal(await core.pause(ANA), true);
   assert.deepEqual(await say('Ana'), []);
   assert.deepEqual(await say('quero mais 5 casadinhos'), [], 'pedido escrito durante a pausa fica com a pessoa');
+  assert.deepEqual(await say('Oi! Vim pelo site e quero fazer uma encomenda 🍫'), []);
+  assert.deepEqual(await say('queria fazer uma encomenda'), []);
   assert.match((await say('menu'))[0], /Fazer encomenda/, '"menu" tira da pausa');
+  assert.equal(await core.pause(ANA), true, 'nova resposta pelo celular depois do "menu" pausa de novo');
+  assert.equal(await core.pause(ANA), false, 'a mesma pausa não é regravada a cada mensagem');
+  assert.deepEqual(await say('1'), []);
+  assert.match((await say('#pedido 2 casadinhos'))[0], /2x Casadinho/);
   await core.pause(ANA);
   tick(PAUSE_TTL_MS + 1);
   assert.match((await say('quero 5 casadinhos'))[0], /5x Casadinho/, 'pausa acaba depois de 12 h');
@@ -154,31 +211,53 @@ test('áudio ou figurinha só recebe aviso no meio de um pedido', async () => {
 });
 
 test('grupo: só #pedido, e a conversa continua no privado', async () => {
-  const { say, orders } = setup();
+  const { say, orders, rows } = setup();
   const group = { isGroup: true };
   assert.deepEqual(await say('oi gente', ANA, group), []);
   assert.deepEqual(await say('quero 10 brigadeiros', ANA, group), [], 'em grupo precisa de #pedido');
+  assert.equal(rows.size, 0);
   assert.match((await say('#pedido 6 casadinhos', ANA, group))[0], /privado/);
   await say('Ana');
   await say('1');
   assert.equal(orders[0].channel, 'grupo');
+  // "#pedido" sem itens: o menu vai no privado e a resposta de lá continua a conversa
+  const b = setup();
+  assert.match((await b.say('#pedido', ANA, group))[0], /Fazer encomenda/);
+  assert.match((await b.say('1'))[0], /Mande o \*número\*/);
 });
 
-test('novidades: inscrição pelo botão do site e "parar novidades"', async () => {
-  const { say, subs, tick } = setup();
-  assert.match((await say('Oi! Quero receber as novidades por aqui 🔔'))[0], /novidades/);
-  assert.ok(subs.has(ANA));
-  tick(SESSION_TTL_MS + 1);
-  await say('parar novidades');
+test('novidades: inscrição pelo botão do site e saída com frases naturais', async () => {
+  for (const out of ['parar novidades', 'parar de receber novidades', 'Não quero mais receber novidades', 'quero parar de receber as novidades']) {
+    const { say, subs, rows } = setup();
+    assert.match((await say('Oi! Quero receber as novidades por aqui 🔔'))[0], /Você vai receber/);
+    assert.ok(subs.has(ANA));
+    assert.equal(rows.size, 0, 'inscrição não abre conversa');
+    assert.match((await say(out))[0], /não vou mais enviar/, out);
+    assert.ok(!subs.has(ANA), out);
+  }
+  // durante a pausa, sair das novidades continua funcionando
+  const { core, say, subs } = setup({ subscribed: [ANA] });
+  await core.pause(ANA);
+  assert.match((await say('parar novidades'))[0], /não vou mais enviar/);
   assert.ok(!subs.has(ANA));
 });
 
-test('comandos de administradora só para números autorizados', async () => {
-  const { say, news } = setup({ admins: [{ phone: CRIS, name: 'Cris', can_post: true, can_manage_orders: true }] });
+test('comandos de administradora só para números autorizados, sem abrir conversa', async () => {
+  const { say, news, rows } = setup({ admins: [{ phone: CRIS, name: 'Cris', can_post: true, can_manage_orders: true }] });
   assert.match((await say('#pedidos', CRIS))[0], /Nenhum pedido em aberto/);
   assert.match((await say('#novidade Kit Provas | 4 docinhos', CRIS))[0], /inscritos recebem/);
   assert.equal(news.length, 1);
+  assert.equal(rows.size, 0, 'comando não abre conversa');
+  assert.deepEqual(await say('oi, tudo bem?', CRIS), [], 'depois do comando, conversa pessoal continua sem resposta');
   assert.deepEqual(await say('#pedidos', ANA), [], 'cliente comum não vê pedidos');
+});
+
+test('nome muito longo ou só um emoji pede o nome de novo', async () => {
+  const { say } = setup();
+  await say('quero 2 brigadeiros');
+  assert.match((await say('a'.repeat(81)))[0], /Me diz seu \*nome\*/);
+  assert.match((await say('💛'))[0], /Me diz seu \*nome\*/);
+  assert.match((await say('Ana'))[0], /Confirmar/);
 });
 
 test('erro ao gravar o pedido avisa o cliente', async () => {

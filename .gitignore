@@ -5,3 +5,4 @@ supabase/.branches/
 node_modules/
 bot/auth/
 bot/bot.log
+bot/bot.pid

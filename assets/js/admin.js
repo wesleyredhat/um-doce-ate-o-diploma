@@ -737,10 +737,11 @@ function botCtx() {
     listNews: () => store.listNews(),
     subscribe: (p, n, on) => store.subscribe(p, n, on),
     placeOrder: (o) => store.placeOrder({ ...o, notes: 'Teste pelo simulador do bot' }),
-    createNews: (n) => store.saveNews({ ...n, published: true }),
-    broadcast: async () => ({ sent: (await store.listSubscribers()).length }),
+    createNews: (n) => store.saveNews({ ...n, channels: ['site'], published: true }), // simulador não dispara WhatsApp
+    broadcast: async () => ({ sent: 0 }),
     listOpenOrders: async () => (await store.listOrders()).filter((o) => OPEN_STATUSES.includes(o.status)),
     notifyHuman: async () => {},
+    findOrder: async (code) => S.orders.find((o) => o.code === code) || null,
   };
 }
 
@@ -795,7 +796,7 @@ function viewBot(v, signal) {
     const line = (color, text) => `<p class="status-line"><span class="dot" style="background:var(--${color})"></span>${text}</p>`;
     const paint = (b) => {
       const alive = b?.last_seen && Date.now() - new Date(b.last_seen).getTime() < 120e3 && b.state !== 'desligado';
-      const qr = typeof b?.qr === 'string' && b.qr.startsWith('data:image/png;base64,') ? b.qr : '';
+      const qr = typeof b?.qr === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(b.qr) ? b.qr : '';
       if (alive && b.state === 'online') {
         botLive.innerHTML = line('leaf', `Bot online no WhatsApp${b.phone ? ` · ${esc(formatPhone(b.phone))}` : ''}`);
       } else if (alive && b.state === 'qr' && qr) {
@@ -828,7 +829,7 @@ function viewBot(v, signal) {
     draw();
     try {
       const replies = await handleMessage({ phone: p.phone, text, profileName: p.name.split(' ')[0], isGroup: p.isGroup }, botCtx());
-      if (!replies.length) SIM.log.push({ dir: 'sys', text: p.isGroup ? 'bot ignorou (no grupo só responde a #pedido)' : 'atendimento humano, bot em silêncio' });
+      if (!replies.length) SIM.log.push({ dir: 'sys', text: p.isGroup ? 'bot ignorou (no grupo só responde a #pedido)' : 'bot ficou em silêncio' });
       for (const r of replies) { await new Promise((ok) => setTimeout(ok, 350)); SIM.log.push({ dir: 'in', text: r }); draw(); }
       draw();
       const before = S.orders.length;
