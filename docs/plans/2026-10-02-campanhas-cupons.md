@@ -2607,4 +2607,5 @@ git commit -m "Documentação de clientes, campanhas e cupons"
 ## Ajustes feitos na implementação
 
 - **Funciona antes do SQL novo.** Pedido sem cupom chama `place_order` sem o `p_coupon` (no site e no bot), então loja e bot seguem recebendo pedidos enquanto o banco não é atualizado. O painel abre mesmo sem as tabelas novas, e as abas Clientes, Cupons e Campanhas explicam que falta rodar o `schema.sql`. No bot, erro no envio de campanhas espera 1 min antes da próxima tentativa e aparece no log no máximo a cada 10 min.
+- **`place_order` com `set search_path = public, extensions`.** No Supabase o pgcrypto (`gen_random_bytes`, usado no código do pedido) fica no esquema `extensions`; só com `public` a função falha e nenhum pedido grava. O banco de teste local passou a instalar o pgcrypto em `extensions`, como no Supabase.
 - **SQL testado num PostgreSQL 16 local**, com papéis e esquema `auth` iguais aos do Supabase: o `schema.sql` roda duas vezes seguidas sem erro, o `supabase/tests/cupons.sql` passa, e as regras de acesso (anônimo, logado sem ser admin e administradora) se comportam como descrito no desenho.
