@@ -9,6 +9,8 @@ import { handleMessage, detectIntent } from '../supabase/functions/_shared/bot-e
 
 export const SESSION_TTL_MS = 30 * 60e3;
 export const PAUSE_TTL_MS = 12 * 3600e3;
+// "parar", "sair", "stop" sozinhos: saída das promoções para quem recebeu campanha (ctx.gotCampaign).
+const STOP_ALONE = /^(?:parar|pare|para|sair|stop|cancelar|descadastrar|remover)[\s!.]*$/i;
 const PAUSE_REFRESH_MS = 10 * 60e3; // pausa já gravada há menos de 10 min não é regravada
 
 const isPaused = (s) => s?.state === 'human';
@@ -40,14 +42,19 @@ export function createCore({ ctx, sessions, now = () => Date.now(), log = consol
 
   // msg: { phone, text, profileName, isGroup } → respostas a enviar (vazio = não responder)
   async function handleIncoming(msg) {
-    const text = String(msg.text || '').trim();
+    let text = String(msg.text || '').trim();
     if (msg.isGroup && !text.startsWith('#')) return []; // grupo: nem consulta o banco
     let session = await loadSession(msg.phone);
     if (!text) {
       // áudio, figurinha, foto sem legenda: só avisa quem está no meio de um pedido
       return session && !isPaused(session) ? ['Por enquanto eu só entendo texto 🙈 Mande *menu* para ver as opções.'] : [];
     }
-    const kind = msg.isGroup ? null : detectIntent(text, await ctx.listProducts());
+    let kind = msg.isGroup ? null : detectIntent(text, await ctx.listProducts());
+    // Quem recebeu campanha costuma responder só "parar" ou "PARE": fora de conversa, vale como saída das promoções.
+    if (!kind && !session && !msg.isGroup && STOP_ALONE.test(text) && (await ctx.gotCampaign?.(msg.phone))) {
+      kind = 'unsubscribe';
+      text = 'parar promoções';
+    }
     const decision = await decide({ ...msg, text }, session, kind);
     if (!decision) return [];
     if (decision === 'resume') {

@@ -23,7 +23,7 @@ const COUPONS = {
 };
 const subtotalOf = (items) => items.reduce((s, i) => s + i.qty * PRODUCTS.find((p) => p.id === i.product_id).price, 0);
 
-function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
+function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [] } = {}) {
   let clock = Date.parse('2026-10-02T12:00:00Z');
   const rows = new Map();
   const orders = [];
@@ -48,7 +48,9 @@ function setup({ admins = [], failOrder = false, subscribed = [] } = {}) {
     isAdmin: async (phone) => admins.find((a) => samePhone(a.phone, phone)) || null,
     listNews: async () => [],
     // igual ao bot: ao sair, diz se a pessoa estava inscrita
-    subscribe: async (phone, _name, on) => (on ? void subs.add(phone) : subs.delete(phone)),
+    // como o bot do Mac: ao sair, diz se a pessoa estava inscrita ou tinha recebido campanha
+    subscribe: async (phone, _name, on) => (on ? void subs.add(phone) : subs.delete(phone) || campaignTo.includes(phone)),
+    gotCampaign: async (phone) => campaignTo.includes(phone),
     checkCoupon,
     placeOrder: async (o) => {
       if (failOrder) throw new Error('banco fora do ar');
@@ -367,4 +369,96 @@ test('"parar promoções" tira das campanhas e das novidades', async () => {
   assert.match((await say('parar promoções'))[0], /não vou mais enviar novidades nem promoções/);
   assert.ok(!subs.has(ANA));
   assert.deepEqual(await setup().say('parar promoções'), [], 'quem não recebia nada fica sem resposta (pode ser conversa)');
+});
+
+test('pedido escrito com cupom recusado: o pedido segue sem o cupom', async () => {
+  const { say, orders } = setup();
+  const [r] = await say('quero 10 brigadeiros cupom VELHO1');
+  assert.match(r, /Cupom expirado\. O pedido segue sem esse cupom/);
+  assert.match(r, /10x Brigadeiro/);
+  assert.match(r, /\*Total: R\$ 40,00\*/);
+  await say('1');
+  await say('1');
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].coupon, undefined);
+});
+
+test('código mandado na hora do nome é cupom, não nome', async () => {
+  const { say, orders } = setup();
+  await say('quero 10 brigadeiros');
+  const [r] = await say('VOLTA10');
+  assert.match(r, /Cupom \*VOLTA10\* anotado/);
+  assert.match(r, /\*Total: R\$ 36,00\*/);
+  assert.match(r, /Para quem é o pedido/);
+  await say('Ana Souza');
+  await say('1');
+  assert.equal(orders[0].customer_name, 'Ana Souza');
+  assert.equal(orders[0].coupon, 'VOLTA10');
+});
+
+test('cupom no meio da escolha não desfaz a etapa', async () => {
+  const { say } = setup();
+  await say('menu');
+  await say('1'); // lista de produtos
+  assert.match((await say('cupom VOLTA10'))[0], /anotado[\s\S]*O que vai ser\? Mande o \*número\* do produto/);
+  assert.match((await say('5'))[0], /Empadinha.*Quantas unidades/s, '"5" continua sendo o produto 5, não a opção 5 do menu');
+  assert.match((await say('cupom VOLTA10'))[0], /anotado[\s\S]*Empadinha.*Quantas unidades/s, 'na quantidade, repete a pergunta');
+  assert.match((await say('2'))[0], /Anotado: 2x Empadinha/);
+});
+
+test('pedido colado e horário não viram cupom', async () => {
+  const { say } = setup();
+  await say('menu');
+  await say('1');
+  await say('1');
+  await say('10'); // "Quer mais alguma coisa?"
+  const [r] = await say('5casadinhos');
+  assert.match(r, /5x Casadinho/);
+  assert.doesNotMatch(r, /Cupom/);
+  await say('Ana');
+  const [c] = await say('18h30');
+  assert.doesNotMatch(c, /Cupom não encontrado/);
+  assert.match(c, /Confirmar/);
+});
+
+test('cupom de outra loja numa conversa pessoal: bot calado', async () => {
+  for (const text of ['usei o cupom IFOOD10 ontem, veio tudo frio', 'QUAL CUPOM TEM HOJE?', 'O CUPOM NAO FUNCIONOU']) {
+    const { say, rows } = setup();
+    assert.deepEqual(await say(text), [], text);
+    assert.equal(rows.size, 0, `não devia abrir conversa: "${text}"`);
+  }
+});
+
+test('saída das promoções: frases naturais valem, conversa pessoal não', () => {
+  for (const text of ['parar promoção', 'pode parar de mandar promoção?', 'pare de me mandar promoção', 'não quero receber promoções',
+    'não mande mais promoções', 'me tira das promoções', 'chega de promoção', 'para de mandar promoção']) {
+    assert.equal(detectIntent(text, PRODUCTS), 'unsubscribe', text);
+  }
+  for (const text of ['tira foto das promoções pra mim', 'vou sair pra ver as promoções do mercado', 'cancela aquela compra das promoções',
+    'vou para as promoções do shopping', 'a saia das promoções tá linda']) {
+    assert.equal(detectIntent(text, PRODUCTS), null, text);
+  }
+});
+
+test('"parar" sozinho: sai das promoções quem recebeu campanha; para os outros é conversa', async () => {
+  const camp = setup({ campaignTo: [ANA] });
+  assert.match((await camp.say('PARE'))[0], /não vou mais enviar novidades nem promoções/);
+  assert.equal(camp.rows.size, 0, 'a saída não abre conversa');
+  const other = setup();
+  assert.deepEqual(await other.say('parar'), [], 'sem campanha recebida, "parar" é conversa pessoal');
+});
+
+test('pedido escrito acima de 500 unidades: o resumo mostra 500, como o banco grava', async () => {
+  const { say } = setup();
+  const [r] = await say('quero 600 brigadeiros');
+  assert.match(r, /500x Brigadeiro/);
+  assert.match(r, /\*Total: R\$ 2000,00\*/);
+});
+
+test('cupom abaixo do pedido mínimo não trava a confirmação', async () => {
+  const { say, orders } = setup();
+  await say('quero 5 brigadeiros cupom DOCE5'); // R$ 20, mínimo de R$ 30
+  await say('1');
+  assert.match((await say('1'))[0], /Pedido \*DD-TEST\* recebido/);
+  assert.equal(orders[0].coupon, undefined);
 });

@@ -96,7 +96,10 @@ const mentionedProduct = (text, products) => productPatterns(products).parts.fin
 const GREETING = /^(?:(?:oi+e?|ola|opa|bom dia|boa tarde|boa noite|e ai|eai|hey|tudo bem|td bem|tudo bom|cris|moca|amiga|gente)\s*)+/;
 const POLITE = '(?: (?:por favor|pf|pfv|pfvr|com voces?|com vcs?|ai|aqui|hoje|amanha|pra (?:hoje|amanha|sabado|domingo|sexta)))*';
 const KEYWORD = new RegExp(`^(?:#(?:pedido|cardapio|menu)\\b.*|(?:(?:ver|o|abre|abrir|mostra|mostrar|manda|mande|envia|envie|me (?:manda|mande|envia|envie|passa|passe|mostra)(?: o)?|qual (?:e )?o|quero ver o|queria ver o|tem) )?(?:menu|cardapio)(?: (?:de voces|da loja|dos doces|de doces|completo))?${POLITE})$`);
-export const UNSUBSCRIBE = /\b(?:parar|pare|para de|sair|cancelar|cancela|descadastrar|descadastra|remover|remove|tirar|tira|chega de|nao (?:quero|desejo) mais(?: receber)?)\b(?:\s+[a-z]+){0,4}?\s+(?:novidades|promocoes)\b/;
+export const UNSUBSCRIBE = /\b(?:parar|pare|para de|sair|cancelar|cancela|descadastrar|descadastra|remover|remove|tirar|tira|chega de|nao (?:quero|desejo) mais(?: receber)?)\b(?:\s+[a-z]+){0,4}?\s+novidades\b/;
+// Saída das promoções: entre o verbo e "promoção" só cabem palavras de ligação ("pare de me mandar promoção";
+// "tira foto das promoções" não é saída).
+const UNSUB_PROMO = /\b(?:parar|pare|para de|sair|cancelar|cancela|cancele|descadastrar|descadastra|remover|remove|tirar|tira|tire|chega de|nao (?:quero|desejo|mande|manda|envie|envia))(?:\s+(?:de|da|das|do|dos|me|mais|receber|mandar|enviar|a|as|o|os|essas?|dessas?|suas?|com))*\s+promoc(?:ao|oes)\b/;
 const SUBSCRIBE = /^(?:quero|queria|gostaria de) receber (?:as )?(?:novidades|promocoes)(?: (?:por aqui|aqui|de voces))?$/;
 const QTY_SHORT = '(?:\\d{1,3}x?|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze|vinte|trinta|cinquenta|cem)';
 const VERB = '(?:quero|queria|gostaria|vou querer|preciso(?: de)?|me ve|separa|reserva|encomendar|encomendo|pedir|faz|fazem|faria|fariam|tem como fazer|da pra fazer|consegue fazer|conseguem fazer)';
@@ -109,7 +112,7 @@ export function detectIntent(text, products) {
   const t = norm(text);
   const c = clean(t);
   const body = c.replace(GREETING, '').trim(); // sem "oi, tudo bem?" no começo
-  if (UNSUBSCRIBE.test(c)) return 'unsubscribe';
+  if (UNSUBSCRIBE.test(c) || UNSUB_PROMO.test(c)) return 'unsubscribe';
   if (KEYWORD.test(body)) return 'keyword';
   if (SUBSCRIBE.test(body)) return 'subscribe';
   if (/\bvim pelo site\b.*\bencomenda\b/.test(c) || /\bpedido\b.*\bdd-[a-z0-9]{4}\b/.test(t)) return 'site';
@@ -167,10 +170,11 @@ function catalogText(products) {
     .join('\n\n');
 }
 
+// No máximo 500 de cada produto, como o banco grava: o resumo mostra o mesmo que vai ser gravado.
 function addToCart(cart, product, qty) {
   const it = cart.find((x) => x.product_id === product.id);
-  if (it) it.qty += qty;
-  else cart.push({ product_id: product.id, name: product.name, price: Number(product.price), qty });
+  if (it) it.qty = Math.min(500, it.qty + qty);
+  else cart.push({ product_id: product.id, name: product.name, price: Number(product.price), qty: Math.min(500, qty) });
 }
 
 const cartItems = (cart) => (cart || []).map((i) => ({ product_id: i.product_id, qty: i.qty }));
@@ -187,6 +191,23 @@ async function summary(s, ctx, phone) {
   const code = s.coupon;
   if (!MIN_ORDER.test(r.message)) delete s.coupon;
   return `${head}\n⚠️ Cupom ${code} não aplicado: ${r.message}.\n*Total: ${brl(subtotal)}*`;
+}
+
+// Pergunta da etapa em que a conversa está: repetida depois de anotar (ou recusar) um cupom.
+async function stepPrompt(s, ctx, phone, products, profileName) {
+  const askName = `Para quem é o pedido? Mande seu *nome*${profileName ? ` ou *1* para usar "${profileName}"` : ''}.`;
+  switch (s.state) {
+    case 'product': return `O que vai ser? Mande o *número* do produto:\n\n${catalogText(products)}`;
+    case 'qty': {
+      const p = products.find((x) => x.id === s.pending);
+      if (p) return `*${p.name}*: ${brl(p.price)} cada.\nQuantas unidades?`;
+      return `O que vai ser? Mande o *número* do produto:\n\n${catalogText(products)}`;
+    }
+    case 'more': return `Quer mais alguma coisa? Mande o *número* de outro produto ou *0* para finalizar.\n\n${catalogText(products)}`;
+    case 'name': return `${await summary(s, ctx, phone)}\n\n${askName}`;
+    case 'confirm': return `${await summary(s, ctx, phone)}${CONFIRM_OPTIONS}`;
+    default: return 'Mande *1* para encomendar ou escreva direto, tipo "quero 10 brigadeiros".';
+  }
 }
 
 async function adminCommand(text, admin, ctx) {
@@ -241,7 +262,8 @@ export async function handleMessage(msg, ctx) {
 
   const settings = (await ctx.getSettings?.()) || {};
   const products = await ctx.listProducts();
-  let s = (await ctx.getSession(phone)) || { state: 'menu', cart: [] };
+  const session = await ctx.getSession(phone);
+  let s = session || { state: 'menu', cart: [] };
   const save = (next) => ctx.saveSession(phone, next);
 
   if (['menu', 'oi', 'ola', 'oie', 'bom dia', 'boa tarde', 'boa noite', 'inicio', 'voltar'].includes(t)) {
@@ -279,50 +301,51 @@ export async function handleMessage(msg, ctx) {
     return [`No momento estamos com a agenda cheia 🥲 ${settings.notice || ''}\nMande *3* para ver as novidades.`];
   }
 
-  // Cupom: "cupom VOLTA10" em qualquer mensagem, ou só o código no meio da conversa.
-  const coupon = ctx.checkCoupon
-    ? couponCodeIn(text) || (['menu', 'more', 'confirm'].includes(s.state) && BARE_CODE.test(text) ? text.toUpperCase() : null)
-    : null;
+  // Pedido escrito ("quero 10 brigadeiros e 2 empadinhas"), também em grupos com #pedido. Vem antes do cupom:
+  // "10brigadeiros" é pedido, não código, e um cupom recusado na mesma mensagem não derruba o pedido.
+  const quick = ['menu', 'product', 'more'].includes(s.state)
+    ? parseQuickOrder(text.replace(/^#pedido/i, '').replace(COUPON_PHRASE, ' '), products) : [];
+
+  // Cupom: "cupom VOLTA10" em qualquer mensagem, ou só o código ("VOLTA10") no meio da conversa.
+  const phrase = ctx.checkCoupon ? couponCodeIn(text) : null;
+  const bare = ctx.checkCoupon && !phrase && !quick.length && session && BARE_CODE.test(text) ? text.toUpperCase() : null;
   let note = '';
-  if (coupon) {
-    const r = await ctx.checkCoupon(coupon, phone, cartItems(s.cart));
+  let refused = '';
+  if (phrase || bare) {
+    const r = await ctx.checkCoupon(phrase || bare, phone, cartItems(s.cart));
+    const unknown = !r.valid && r.message === 'Cupom não encontrado';
     // Abaixo do pedido mínimo ainda vale anotar: o resumo confere de novo quando o carrinho crescer.
     const minOnly = !r.valid && MIN_ORDER.test(r.message || '');
-    if (!r.valid && !minOnly) {
-      if (s.state !== 'confirm') return [`🎟️ ${r.message}.`];
-      const sum = await summary(s, ctx, phone);
+    if (unknown && (bare || (!session && !quick.length))) {
+      // Código solto que não é cupom da loja ("18h30") segue a conversa normal; cupom de outra loja
+      // numa conversa pessoal ("usei o cupom IFOOD10") fica sem resposta.
+      if (!bare) return [];
+    } else if (!r.valid && !minOnly) {
+      refused = `🎟️ ${r.message}.`;
+    } else {
+      s = { ...s, coupon: r.code };
       await save(s);
-      return [`🎟️ ${r.message}.\n\n${sum}${CONFIRM_OPTIONS}`];
+      note = `🎟️ Cupom *${r.code}* anotado: ${r.label} de desconto${r.min_order ? ` em pedidos a partir de ${brl(r.min_order)}` : ''}.`;
     }
-    s = { ...s, coupon: r.code };
-    await save(s);
-    note = `🎟️ Cupom *${r.code}* anotado: ${r.label} de desconto${r.min_order ? ` em pedidos a partir de ${brl(r.min_order)}` : ''}.`;
   }
 
-  // Atalho: pedido em linguagem natural ("quero 10 brigadeiros e 2 empadinhas"), também em grupos com #pedido
-  const quick = parseQuickOrder(text.replace(/^#pedido/i, '').replace(COUPON_PHRASE, ' '), products);
-  if (quick.length && ['menu', 'product', 'more'].includes(s.state)) {
+  if (quick.length) {
     const cart = s.cart || [];
     quick.forEach(({ product, qty }) => addToCart(cart, product, qty));
     s = { ...s, cart, state: 'name', fromGroup: !!msg.isGroup || s.fromGroup };
     const sum = await summary(s, ctx, phone);
     await save(s);
     const intro = msg.isGroup ? `Anotado, ${msg.profileName || 'pessoal'}! Vou continuar com você no privado 😉\n\n` : '';
-    return [`${intro}${note ? `${note}\n\n` : ''}${sum}\n\nPara quem é o pedido? Mande seu *nome*${msg.profileName ? ` ou *1* para usar "${msg.profileName}"` : ''}.`];
+    const head = note || (refused ? `${refused} O pedido segue sem esse cupom.` : '');
+    return [`${intro}${head ? `${head}\n\n` : ''}${sum}\n\nPara quem é o pedido? Mande seu *nome*${msg.profileName ? ` ou *1* para usar "${msg.profileName}"` : ''}.`];
   }
 
-  // Mensagem só com o cupom: anota e segue de onde a conversa estava.
-  if (note) {
-    if (s.state === 'confirm') {
-      const sum = await summary(s, ctx, phone);
-      await save(s);
-      return [`${note}\n\n${sum}${CONFIRM_OPTIONS}`];
-    }
-    s = { ...s, state: s.cart?.length ? 'more' : 'menu', pending: undefined };
+  // Mensagem só com o cupom: responde e repete a pergunta da etapa em que a conversa estava.
+  if (note || refused) {
+    if (s.state === 'menu' && s.cart?.length) s = { ...s, state: 'more' };
+    const prompt = await stepPrompt(s, ctx, phone, products, msg.profileName);
     await save(s);
-    return [s.cart?.length
-      ? `${note}\n\nQuer mais alguma coisa? Mande o *número* de outro produto ou *0* para finalizar.\n\n${catalogText(products)}`
-      : `${note}\n\nMande *1* para encomendar ou escreva direto, tipo "quero 10 brigadeiros".`];
+    return [`${note || refused}\n\n${prompt}`];
   }
 
   switch (s.state) {
@@ -398,15 +421,20 @@ export async function handleMessage(msg, ctx) {
 
     case 'confirm': {
       if (t === '1' || t === 'sim' || t === 'confirmar') {
+        let use = s.coupon;
+        if (use && ctx.checkCoupon) {
+          const q = await ctx.checkCoupon(use, phone, cartItems(s.cart));
+          if (!q.valid && MIN_ORDER.test(q.message || '')) use = null; // o resumo já disse que esse cupom não se aplica
+        }
         let r;
         try {
           r = await ctx.placeOrder({
             customer_name: s.name, phone, channel: s.fromGroup ? 'grupo' : 'whatsapp', items: cartItems(s.cart),
-            ...(s.coupon ? { coupon: s.coupon } : {}),
+            ...(use ? { coupon: use } : {}),
           });
         } catch (e) {
           // O cupom deixou de valer entre o resumo e a confirmação (esgotou, expirou): segue sem ele.
-          if (!s.coupon || !COUPON_ERROR.test(e.message)) throw e;
+          if (!use || !COUPON_ERROR.test(e.message)) throw e;
           const next = { ...s, coupon: undefined };
           await save(next);
           return [`🎟️ ${e.message}, então tirei o cupom.\n\n${await summary(next, ctx, phone)}${CONFIRM_OPTIONS}`];

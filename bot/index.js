@@ -129,6 +129,12 @@ const ctx = {
   broadcast: async () => ({ queued: true }),
   listOpenOrders: async () =>
     (await db.from('orders').select('*').in('status', ['novo', 'confirmado', 'producao', 'pronto']).order('created_at')).data ?? [],
+  // Recebeu campanha nos últimos 30 dias: "parar" ou "sair" sozinho vale como saída das promoções (core.js).
+  gotCampaign: async (phone) => {
+    const since = new Date(Date.now() - 30 * 864e5).toISOString();
+    const { count } = await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('phone_key', phoneKey(phone)).eq('status', 'enviada').gte('sent_at', since);
+    return count > 0;
+  },
   notifyHuman: async (phone, name) => {
     if (OWNER_PHONE) await sendText(toJid(OWNER_PHONE), `💬 ${name || 'Cliente'} (+${phone}) pediu atendimento humano no bot.`);
   },
@@ -174,7 +180,8 @@ const campaignDb = {
   },
   isOptedOut: async (key) => !!must(await db.from('optouts').select('phone_key').eq('phone_key', key).maybeSingle()),
   mark: async (id, patch) => must(await db.from('campaign_sends').update(patch).eq('id', id)),
-  pause: async (id, reason) => must(await db.from('campaigns').update({ status: 'pausada', pause_reason: reason }).eq('id', id)),
+  // Só pausa campanha que ainda está enviando: não desfaz um cancelamento feito no painel durante o envio.
+  pause: async (id, reason) => must(await db.from('campaigns').update({ status: 'pausada', pause_reason: reason }).eq('id', id).eq('status', 'enviando')),
   finish: async (id) => {
     const open = must(await db.from('campaign_sends').select('id', { count: 'exact', head: true }).eq('campaign_id', id).in('status', ['pendente', 'enviando']));
     if (open) return false;
@@ -182,6 +189,9 @@ const campaignDb = {
     return true;
   },
 };
+let campaignTick = Promise.resolve(); // envio de campanha em andamento (o desligamento espera por ele)
+let campaignBusy = false;
+let stopping = false;
 const sender = createSender({
   db: campaignDb,
   siteUrl: SITE_URL,
@@ -365,7 +375,8 @@ if ((await db.from('news').select('wa_sent_at').limit(1)).error?.code === '42703
 }
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
-    await Promise.race([queue, sleep(10e3)]); // termina a mensagem em andamento (um pedido sendo gravado)
+    stopping = true; // não começa envio de campanha novo
+    await Promise.race([Promise.all([queue, campaignTick]), sleep(10e3)]); // termina a mensagem em andamento (pedido ou campanha)
     await setStatus({ state: 'desligado', qr: null }).catch(() => {});
     process.exit(0);
   });
@@ -378,11 +389,12 @@ setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);
 let campaignRetryAt = 0;
 let campaignWarnAt = 0;
 setInterval(() => {
-  if (Date.now() < campaignRetryAt) return;
-  sender.tick().catch((e) => {
+  if (stopping || campaignBusy || Date.now() < campaignRetryAt) return;
+  campaignBusy = true;
+  campaignTick = sender.tick().catch((e) => {
     campaignRetryAt = Date.now() + 60e3;
     if (Date.now() - campaignWarnAt < 10 * 60e3) return;
     campaignWarnAt = Date.now();
     console.error(/schema cache|does not exist/.test(e.message) ? `⚠️  Para enviar campanhas, rode o supabase/schema.sql no SQL Editor do Supabase (${e.message})` : `erro no envio de campanhas: ${e.message}`);
-  });
+  }).finally(() => { campaignBusy = false; });
 }, CAMPAIGN_TICK_MS);
