@@ -132,6 +132,14 @@ function refreshRewards() {
     if (changed && ['inicio', 'pedidos'].includes(S.view)) render();
   }).catch(() => {});
 }
+// Comprovante do Pix pelo WhatsApp (bot/receipts.js): conferido pelo bot ou para a loja conferir.
+function receiptChip(o) {
+  if (!o.receipt_at || ['entregue', 'cancelado'].includes(o.status)) return '';
+  const when = fmtDateTime(o.receipt_at);
+  if (o.receipt_ok) return `<span class="ch" title="Comprovante pelo WhatsApp em ${when}: ${esc(o.receipt_note || 'conferido')}. Confira no banco.">🧾 conferido</span>`;
+  if (o.status !== 'confirmado') return '';
+  return `<span class="ch" style="background:var(--berry-soft);color:#9a3f35" title="Comprovante pelo WhatsApp em ${when}, mas ${esc(o.receipt_note || 'não deu para conferir')}. Veja no WhatsApp e no banco.">🧾 conferir</span>`;
+}
 const rewardDue = (o) => !['entregue', 'cancelado'].includes(o.status) && !!S.rewardsDue?.get(phoneKey(o.phone));
 
 // Roda também com a aba em segundo plano (o navegador espaça para 1 vez por minuto): o aviso não espera a aba voltar.
@@ -141,13 +149,16 @@ async function poll() {
     S.orders = await store.listOrders({ since: new Date(Date.now() - 400 * 864e5).toISOString() });
     const fresh = S.orders.filter((o) => !before.has(o.id));
     // O bot também muda pedidos (comprovante do Pix leva para a produção): o quadro acompanha.
-    const receipts = S.orders.filter((o) => o.receipt_at && before.has(o.id) && !before.get(o.id).receipt_at);
+    const receipts = S.orders.filter((o) => o.receipt_at && before.has(o.id) && before.get(o.id).receipt_at !== o.receipt_at);
     const moved = S.orders.some((o) => before.has(o.id) && before.get(o.id).status !== o.status);
     if (fresh.length) {
       chime();
       toast(`🔔 ${fresh.length} novo(s) pedido(s)! ${fresh[0].customer_name}`);
     }
-    for (const o of receipts) toast(`🧾 Comprovante de ${o.customer_name}: ${o.code} foi para a produção. Confira no banco.`);
+    for (const o of receipts) {
+      if (o.receipt_ok) toast(`🧾 Comprovante de ${o.customer_name} conferido: ${o.code} foi para a produção. Confira no banco.`);
+      else toast(`🧾 ${o.customer_name} mandou um comprovante que o bot não conferiu (${o.receipt_note || 'ilegível'}). Veja no WhatsApp.`, 'err');
+    }
     if ((fresh.length || moved) && ['inicio', 'pedidos', 'producao'].includes(S.view)) render();
     updateNewPill();
   } catch (e) { console.warn(e); }
@@ -343,7 +354,7 @@ function orderCard(o) {
   const s = st(o.status);
   const fresh = !S.seen.has(o.id);
   return `<article class="ocard ${fresh ? 'fresh' : ''}" style="--st:${s.color}" draggable="true" data-id="${o.id}">
-    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}${o.paid ? '<span class="ch" title="Pago na hora">✅ pago</span>' : ''}${o.receipt_at && !['entregue', 'cancelado'].includes(o.status) ? `<span class="ch" title="Comprovante recebido pelo WhatsApp em ${fmtDateTime(o.receipt_at)}: confira no banco">🧾 comprovante</span>` : ''}${rewardDue(o) ? `<span class="ch" title="Completou a Carteirinha do Formando: coloque ${esc(CONFIG.LOYALTY_REWARD)} neste pedido">🎁 brinde</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
+    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}${o.paid ? '<span class="ch" title="Pago na hora">✅ pago</span>' : ''}${receiptChip(o)}${rewardDue(o) ? `<span class="ch" title="Completou a Carteirinha do Formando: coloque ${esc(CONFIG.LOYALTY_REWARD)} neste pedido">🎁 brinde</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
     <div class="ocard__who">${esc(o.customer_name)} <a href="${waLink('', o.phone)}" target="_blank" rel="noopener" style="font-weight:600;font-size:.82rem;color:var(--ink-soft)">${formatPhone(o.phone)}</a></div>
     <ul>${o.items.map((i) => `<li>${i.qty}× ${esc(i.name)}</li>`).join('')}</ul>
     ${o.notes ? `<div class="ocard__notes">📝 ${esc(o.notes)}</div>` : ''}

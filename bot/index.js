@@ -6,10 +6,12 @@
 //
 // O QR Code aparece no terminal e na página /bot do site. Quando o bot responde
 // e quando fica quieto está em core.js. A sessão do WhatsApp fica em ./auth.
-import { execFileSync } from 'node:child_process';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import makeWASocket, { Browsers, DisconnectReason, fetchLatestWaWebVersion, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
+import makeWASocket, { Browsers, DisconnectReason, downloadMediaMessage, fetchLatestWaWebVersion, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import { createClient } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -137,7 +139,7 @@ const ctx = {
     if (error) throw new Error(error.message);
     return data;
   },
-  findOrder: async (code) => (await db.from('orders').select('code, phone, total, items, status').eq('code', code).maybeSingle()).data,
+  findOrder: async (code) => (await db.from('orders').select('code, phone, customer_name, total, items, status, paid, delivery, delivery_date').eq('code', code).maybeSingle()).data,
   // #novidade pelo WhatsApp: só grava; o envio fica com sendPendingNews para não travar as conversas.
   createNews: async (n) => {
     const { data, error } = await db.from('news').insert({ ...n, published: true }).select().single();
@@ -234,16 +236,55 @@ const notices = createNotices({
   wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
   log,
 });
-// Comprovante do Pix pelo WhatsApp (foto, PDF ou "paguei"): o pedido confirmado vai para a produção. Regras em receipts.js.
+// Comprovante do Pix pelo WhatsApp: foto ou PDF conferido (valor ou código, e data) leva o pedido confirmado para
+// a produção; o que não confere fica para a loja conferir. Regras em receipts.js e receipt-check.js.
 const receipts = createReceipts({
   db: {
     recentConfirmations: async (since) => must(await db.from('order_notices')
-      .select('sent_at, order:orders(id, code, customer_name, phone, status, paid)')
+      .select('sent_at, order:orders(id, code, customer_name, phone, status, paid, total, created_at, receipt_at)')
       .eq('kind', 'confirmado').eq('status', 'enviada').gte('sent_at', since).order('sent_at', { ascending: false }).limit(200)) || [],
-    advance: async (id, at) => !!must(await db.from('orders').update({ status: 'producao', receipt_at: at }).eq('id', id).eq('status', 'confirmado').select('id')).length,
+    advance: async (id, at, note) => !!must(await db.from('orders').update({ status: 'producao', receipt_at: at, receipt_ok: true, receipt_note: note })
+      .eq('id', id).eq('status', 'confirmado').select('id')).length,
+    flag: async (id, at, note) => must(await db.from('orders').update({ receipt_at: at, receipt_ok: false, receipt_note: note }).eq('id', id).eq('status', 'confirmado')),
   },
   log,
 });
+
+// Texto do comprovante pelo OCR do macOS (ocr.swift), compilado uma vez quando o bot liga (ou quando o .swift muda).
+// O arquivo baixado fica só o tempo da leitura numa pasta temporária. Sem o OCR, o comprovante fica para a loja conferir.
+const OCR_SRC = fileURLToPath(new URL('./ocr.swift', import.meta.url));
+const OCR_BIN = fileURLToPath(new URL('./.ocr', import.meta.url));
+let ocrReady = null;
+function ensureOcr() {
+  ocrReady ||= new Promise((ok) => {
+    try {
+      if (statSync(OCR_BIN).mtimeMs >= statSync(OCR_SRC).mtimeMs) return ok(true);
+    } catch {
+      // ainda não compilado
+    }
+    execFile('swiftc', ['-O', OCR_SRC, '-o', OCR_BIN], { timeout: 600e3 }, (e) => {
+      if (e) {
+        console.error('OCR dos comprovantes indisponível (swiftc):', e.message);
+        ocrReady = null;
+        return ok(false);
+      }
+      log('OCR dos comprovantes pronto.');
+      ok(true);
+    });
+  });
+  return ocrReady;
+}
+async function readReceipt(m) {
+  if (!(await ensureOcr())) return '';
+  const buf = await downloadMediaMessage(m, 'buffer', {}, { logger: pino({ level: 'error' }), reuploadRequest: sock.updateMediaMessage });
+  const file = join(tmpdir(), `umdoce-comprovante-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  writeFileSync(file, buf);
+  try {
+    return await new Promise((ok) => execFile(OCR_BIN, [file], { timeout: 60e3, maxBuffer: 1 << 20 }, (e, out) => ok(e ? '' : out)));
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
 let noticeTick = Promise.resolve(); // o desligamento espera o aviso em andamento
 let noticeWarnAt = 0;
 function sendNotices() {
@@ -340,7 +381,7 @@ async function onMessage(m, type) {
   }
   if (!isGroup) {
     const media = !!(content.imageMessage || content.documentMessage);
-    const reply = await receipts.handle({ phone, media, text }).catch((e) => { console.error('erro ao tratar comprovante', e.message); return null; });
+    const reply = await receipts.handle({ phone, media, text, read: () => readReceipt(m) }).catch((e) => { console.error('erro ao tratar comprovante', e.message); return null; });
     if (reply) {
       await sendText(replyTo, reply);
       return;
@@ -465,6 +506,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 await setStatus({ state: 'iniciando', qr: null, pairing: null });
+ensureOcr(); // compila em segundo plano: o primeiro comprovante não espera
 await start();
 setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);
 setInterval(sendNotices, NOTICE_TICK_MS);

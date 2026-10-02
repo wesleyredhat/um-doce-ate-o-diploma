@@ -200,11 +200,13 @@ test('no menu: produto citado, pergunta de preço, "ok, quero o 1", menu uma vez
 
 test('mensagem do site com código não duplica o pedido', async () => {
   const { say, orders } = setup();
-  const msg = 'Oi! Acabei de fazer o pedido *DD-K7P2* pelo site 🎓\n\n• 10x Brigadeiro\n\nTotal: *R$ 40,00*\nNome: Ana';
+  // a mensagem pronta do site (shop.js, showDone)
+  const msg = 'Oi! Aqui é Ana Souza 👋\nAcabei de fazer o pedido *DD-K7P2* pelo site 🎓\n\n• 10x Brigadeiro\n📍 Entrega: Na faculdade · sexta, 09/10\nTotal: *R$ 40,00*';
   const [r] = await say(msg);
-  assert.match(r, /Pedido \*DD-K7P2\* recebido/);
+  assert.match(r, /^Oi, Ana! Recebi seu pedido \*DD-K7P2\* 🎓\n\n• 10x Brigadeiro\nTotal: \*R\$ 40,00\*/);
   // o Pix vai na confirmação (bot/notices.js), não aqui
-  assert.match(r, /confirmo por aqui, já com a chave Pix/);
+  assert.match(r, /Assim que eu confirmar, te mando aqui o Pix para o pagamento e, depois, aviso quando estiver pronto 💛$/);
+  assert.equal((r.match(/por aqui/g) || []).length, 0, 'sem "por aqui" repetido');
   assert.doesNotMatch(r, /pix@doce\.com/);
   // já confirmado: manda o Pix Copia e Cola de novo para quem pergunta
   const again = await setup({ orderStatus: 'confirmado' }).say(msg);

@@ -429,9 +429,10 @@ function wireForm() {
 function showDone(r, name, lines, delivery) {
   $('#doneName').textContent = name.split(' ')[0];
   $('#doneCode').textContent = r.code;
-  const off = Number(r.discount) > 0 ? `\nCupom ${r.coupon}: −${money(r.discount)}` : '';
-  const where = delivery.delivery ? `\nEntrega: ${deliveryText(delivery, settings)}` : '';
-  const msg = `Oi! Acabei de fazer o pedido *${r.code}* pelo site 🎓\n\n${lines.map((l) => `• ${l.qty}x ${l.p.name}`).join('\n')}${off}\n\nTotal: *${money(r.total)}*\nNome: ${name}${where}`;
+  // Vai do celular da cliente para o da loja; o bot reconhece pelo código do pedido e responde (bot-engine.js).
+  const where = delivery.delivery ? `\n📍 Entrega: ${deliveryText(delivery, settings)}` : '';
+  const off = Number(r.discount) > 0 ? `\n🎟️ Cupom ${r.coupon}: −${money(r.discount)}` : '';
+  const msg = `Oi! Aqui é ${name} 👋\nAcabei de fazer o pedido *${r.code}* pelo site 🎓\n\n${lines.map((l) => `• ${l.qty}x ${l.p.name}`).join('\n')}${where}${off}\nTotal: *${money(r.total)}*`;
   $('#doneWa').href = waLink(msg);
   const dlg = $('#doneDialog');
   dlg.showModal();

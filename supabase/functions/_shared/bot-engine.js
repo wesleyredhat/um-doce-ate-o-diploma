@@ -211,7 +211,7 @@ _Dica: pode mandar direto, tipo "quero 10 brigadeiros e 2 empadinhas"._`;
 }
 
 // O Pix vai só na confirmação (bot/notices.js): ninguém paga por um pedido que ainda pode não ser aceito.
-const AFTER_ORDER = '\n\nVou conferir a agenda e confirmo por aqui, já com a chave Pix para o pagamento.';
+const AFTER_ORDER = '\n\nAgora vou conferir a agenda. Assim que eu confirmar, te mando aqui o Pix para o pagamento e, depois, aviso quando estiver pronto 💛';
 
 function catalogText(products) {
   const groups = {};
@@ -370,10 +370,12 @@ export async function handleMessage(msg, ctx) {
     const o = await ctx.findOrder?.(code);
     if (!o || !samePhone(o.phone, phone)) return [`Recebi sua mensagem sobre o pedido *${code}* 💛 Já vamos conferir e te respondemos por aqui!`];
     // Já confirmado: o aviso com o Pix saiu (bot/notices.js), então manda o Pix Copia e Cola de novo para quem pergunta.
-    const pix = o.status && o.status !== 'novo' ? orderPix(settings, o) : null;
+    const pix = o.status && o.status !== 'novo' && !o.paid ? orderPix(settings, o) : null;
     const next = !o.status || o.status === 'novo' ? AFTER_ORDER
       : pix ? '\n\nJá está confirmado ✅ O Pix Copia e Cola vai na próxima mensagem.' : '\n\nJá está confirmado ✅';
-    const reply = `🎓 Pedido *${o.code}* recebido! ✅\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}\nTotal: *${brl(o.total)}*${next}\n\nTe aviso por aqui quando estiver pronto 💛`;
+    const first = String(o.customer_name || msg.profileName || '').split(' ')[0];
+    const where = o.delivery === 'ponto' && o.delivery_date ? `\n📍 Entrega: ${deliveryText(o, settings)}` : '';
+    const reply = `Oi${first ? `, ${first}` : ''}! Recebi seu pedido *${o.code}* 🎓\n\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}${where}\nTotal: *${brl(o.total)}*${next}`;
     return pix ? [reply, pix.code] : [reply];
   }
   if (s.state === 'human') return []; // atendimento humano em andamento
@@ -554,7 +556,7 @@ export async function handleMessage(msg, ctx) {
         await save(null);
         const off = Number(r.discount) > 0 ? ` (já com ${brl(r.discount)} de desconto)` : '';
         const where = s.delivery_label ? `\n📍 Entrega: ${s.delivery_label}` : '';
-        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${off}${where}${AFTER_ORDER}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
+        return [`Pedido *${r.code}* recebido, ${s.name.split(' ')[0]}! 🎓\nTotal: *${brl(r.total)}*${off}${where}${AFTER_ORDER}`];
       }
       if (t === '2') {
         await save({ ...s, state: 'more' });

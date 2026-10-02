@@ -51,8 +51,11 @@ alter table public.orders add column if not exists delivery text not null defaul
 alter table public.orders add column if not exists delivery_date date;
 -- Pago na hora (dinheiro ou Pix no balcão): a confirmação sai sem a cobrança. Só a loja marca (place_order e painel).
 alter table public.orders add column if not exists paid boolean not null default false;
--- Comprovante do Pix recebido pelo WhatsApp (bot/receipts.js): o bot leva o pedido para a produção; a loja confere no banco.
+-- Comprovante do Pix pelo WhatsApp (bot/receipts.js): quando chegou, se o bot conferiu (valor ou código, e data)
+-- e o que conferiu ou faltou. Conferido leva o pedido para a produção; a loja confere no banco do mesmo jeito.
 alter table public.orders add column if not exists receipt_at timestamptz;
+alter table public.orders add column if not exists receipt_ok boolean;
+alter table public.orders add column if not exists receipt_note text;
 
 create table if not exists public.news (
   id uuid primary key default gen_random_uuid(),
