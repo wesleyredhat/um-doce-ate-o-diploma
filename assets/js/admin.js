@@ -893,6 +893,7 @@ function couponDialog(c = { code: '', kind: 'percent', value: '', min_order: 0, 
 const CAMP_STATUS = { enviando: ['Enviando', 'var(--leaf)'], pausada: ['Pausada', 'var(--honey)'], concluida: ['Concluída', 'var(--cocoa)'], cancelada: ['Cancelada', 'var(--muted)'] };
 const SEND_LABEL = { pendente: 'na fila', enviando: 'enviando', enviada: 'enviada', falhou: 'falhou', pulada: 'pulada (pediu para sair)' };
 const countBy = (sends) => sends.reduce((a, s) => ((a[s.status] = (a[s.status] || 0) + 1), a), {});
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const sentToday = () => S.campaigns.flatMap((c) => c.sends).filter((s) => s.status === 'enviada' && Date.parse(s.sent_at) >= spDayStart()).length;
 
 function campaignCard(c) {
@@ -905,7 +906,7 @@ function campaignCard(c) {
     <div class="camp__head"><h3>${esc(c.name)}</h3><span class="status-line"><span class="dot" style="background:${color}"></span>${label}</span></div>
     <p class="hint">${fmtDateTime(c.created_at)} · ${esc(AUDIENCES[c.audience?.type] || 'Público escolhido')}${c.coupon_code ? ` · cupom <b>${esc(c.coupon_code)}</b>` : ''}</p>
     <div class="progress" role="progressbar" aria-label="Progresso" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
-    <p class="camp__nums"><b>${n.enviada || 0}</b> enviadas de ${total}${queued ? ` · ${queued} na fila` : ''}${n.falhou ? ` · ${n.falhou} falharam` : ''}${n.pulada ? ` · ${n.pulada} puladas` : ''}</p>
+    <p class="camp__nums"><b>${n.enviada || 0}</b> ${(n.enviada || 0) === 1 ? 'enviada' : 'enviadas'} de ${total}${queued ? ` · ${queued} na fila` : ''}${n.falhou ? ` · ${plural(n.falhou, 'falhou', 'falharam')}` : ''}${n.pulada ? ` · ${plural(n.pulada, 'pulada', 'puladas')}` : ''}</p>
     ${c.status === 'pausada' && c.pause_reason ? `<p class="err">${esc(c.pause_reason)}</p>` : ''}
     <div class="camp__actions">
       ${c.status === 'enviando' ? `<button class="btn btn--soft btn--sm" data-camp="${c.id}" data-to="pausada">Pausar</button>` : ''}
@@ -994,7 +995,10 @@ async function viewCampaigns(v, signal) {
 async function campaignDialog() {
   let all;
   let subscribers;
-  try { [all, subscribers] = await Promise.all([customers(), store.listSubscribers()]); } catch (e) { toast(dbError(e), 'err'); return; }
+  // Ritmo e envios de hoje também, para a estimativa valer mesmo com a janela aberta pela aba Clientes.
+  try {
+    [all, subscribers, S.campaigns, S.campaignCfg] = await Promise.all([customers(), store.listSubscribers(), store.listCampaigns(), store.getCampaignSettings()]);
+  } catch (e) { toast(dbError(e), 'err'); return; }
   const usable = S.coupons.filter((c) => ['ativo', 'agendado'].includes(couponState(c, couponUses(c.code).length)));
   const excluded = new Set();
   openDialog(`<h2>Nova campanha</h2>
@@ -1019,14 +1023,16 @@ async function campaignDialog() {
     const audience = () => pickAudience(all, subscribers, filter());
     const recipients = () => audience().filter((r) => !excluded.has(r.phone_key));
     const couponCode = () => S.coupons.find((c) => c.id === f.coupon_id.value)?.code || null;
+    // O bot termina uma campanha antes de começar a próxima: o que já está na fila vem antes.
+    const ahead = S.campaigns.filter((c) => c.status === 'enviando').reduce((n, c) => n + c.sends.filter((x) => x.status === 'pendente' || x.status === 'enviando').length, 0);
     const paintSummary = () => {
       const list = recipients();
       const off = audience().length - list.length;
       $('#audCount', m).textContent = `${list.length} ${list.length === 1 ? 'pessoa vai' : 'pessoas vão'} receber${off ? ` (${off} desmarcada${off > 1 ? 's' : ''})` : ''} · ver lista`;
       $('#cpPrev', m).innerHTML = waFormat(campaignText({ body: f.body.value, coupon_code: couponCode() }, list[0]?.name || 'Ana', siteBase()));
       $('#cpEta', m).textContent = !list.length ? 'Ninguém nesse grupo.'
-        : IS_DEMO ? `${list.length} mensagens · no modo demonstração nada é enviado de verdade`
-        : `${list.length} mensagens · ${finishText(list.length, S.campaignCfg, { sentToday: sentToday() })}`;
+        : IS_DEMO ? `${plural(list.length, 'mensagem', 'mensagens')} · no modo demonstração nada é enviado de verdade`
+        : `${plural(list.length, 'mensagem', 'mensagens')} · ${finishText(ahead + list.length, S.campaignCfg, { sentToday: sentToday() })}${ahead ? ` (depois de ${ahead} que já estão na fila)` : ''}`;
       $('#cpSend', m).disabled = !list.length;
       $('#cpSend', m).innerHTML = `${icon('send')} Enviar para ${list.length}`;
     };

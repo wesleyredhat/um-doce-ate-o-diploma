@@ -296,7 +296,7 @@ with valid as (
     max(created_at) as last_order
   from valid group by k
 ), lines as (
-  select k, i->>'product_id' as product_id, max(i->>'name') as name, sum((i->>'qty')::int) as qty
+  select k, i->>'product_id' as product_id, (array_agg(i->>'name' order by created_at desc))[1] as name, sum((i->>'qty')::int) as qty
   from valid, jsonb_array_elements(items) i
   group by k, i->>'product_id'
 ), prods as (

@@ -29,7 +29,7 @@ Aba nova **Clientes** no painel, montada a partir dos pedidos (sem cadastro à p
 - Fonte: view `admin_customers` (`security_invoker`, então vale a mesma regra de acesso de `orders`: só admin). Cobre todo o histórico; o painel hoje só carrega 400 dias de pedidos.
 - Agrupada por `phone_key(phone)`, que unifica celulares com e sem o 9 (mesma regra de `samePhone` no motor do bot).
 - Colunas: telefone (o mais recente), nome (do último pedido), pedidos (sem cancelados), total gasto, primeiro e último pedido, `product_ids` (produtos já comprados) e `top_products` (3 mais comprados por quantidade).
-- Na tela: busca, ordenação, botão de WhatsApp individual e selo "não recebe promoções" para quem está em `optouts`.
+- Na tela: busca, ordenação, botão de WhatsApp individual e selo "sem promoções" para quem está em `optouts`.
 
 Filtros de público para campanhas:
 
@@ -71,7 +71,7 @@ Banco:
 
 Site:
 
-- `?cupom=CODIGO` na URL preenche o cupom; o formulário ganha o campo "Tem cupom?".
+- `?cupom=CODIGO` na URL preenche o cupom; o formulário ganha o campo "Tem cupom de desconto?".
 - Mostra desconto e novo total antes de enviar (`check_coupon`). A regra "uma vez por WhatsApp" é conferida quando o telefone está preenchido e de novo ao gravar.
 - A mensagem de WhatsApp enviada depois do pedido inclui o cupom e o desconto.
 
@@ -91,7 +91,7 @@ Tabelas:
 - `campaigns`: `name`, `body` (texto com `{nome}`), `coupon_id` (opcional), `audience jsonb` (filtro usado, para registro), `status` (`enviando`, `pausada`, `concluida`, `cancelada`; sem rascunho, a campanha nasce na hora do envio), `pause_reason`, `created_at`, `finished_at`.
 - `campaign_sends`: `campaign_id`, `phone`, `phone_key`, `name`, `status` (`pendente`, `enviando`, `enviada`, `falhou`, `pulada`), `error`, `claimed_at`, `sent_at`; único por (`campaign_id`, `phone_key`).
 - `optouts`: `phone_key` (chave), `phone`, `created_at`.
-- `settings` chave `campaigns` (só admin lê): `{ daily_limit: 80, start_hour: 9, end_hour: 20 }`, editável em Ajustes.
+- `settings` chave `campaigns` (só admin lê): `{ daily_limit: 80, start_hour: 9, end_hour: 20 }`, editável na aba Campanhas (Ritmo de envio).
 
 Criar campanha (aba **Campanhas**): nome interno, público (filtro, contagem, desmarcar), mensagem com `{nome}`, cupom opcional (acrescenta o código e o link `?cupom=`), prévia no formato do WhatsApp. Rodapé fixo: "_Para não receber mais promoções, responda *parar promoções*._". Ao enviar, o painel grava a campanha e as linhas de `campaign_sends` e mostra a estimativa ("47 mensagens · termina hoje por volta das 16h").
 
@@ -108,7 +108,7 @@ Painel acompanha o progresso (enviadas, pendentes, falhas, puladas) e permite pa
 Saída e volta:
 
 - "parar promoções" ou "parar novidades": grava em `optouts` e remove de `subscribers`. Vale para campanhas e novidades. O bot confirma.
-- "receber novidades": remove de `optouts` e inscreve de novo.
+- "quero receber novidades" (ou a opção 4 do menu): remove de `optouts` e inscreve de novo.
 - Quem sai também é removido de `subscribers`, então as Novidades deixam de chegar sem mudar o envio delas.
 
 Respostas à campanha seguem as regras atuais de `bot/core.js`: "menu", pedido escrito ou "cupom X" chamam o bot; o resto fica para atendimento humano. A mensagem sugere "Peça pelo link ou responda *menu*".
@@ -121,7 +121,7 @@ Testes (`npm test` em `bot/`, relógio falso):
 
 - Cupom no bot: aplicado, ainda não começou, expirado, esgotado, já usado (com e sem o 9), abaixo do mínimo, pausado, recusado na hora de gravar.
 - `coupons.js`: percentual, valor fixo, teto no subtotal, arredondamento, limites de data no fuso de Brasília.
-- "parar promoções", "parar novidades" e "receber novidades".
+- "parar promoções", "parar novidades" e "quero receber novidades".
 - `assets/js/campaigns.js`: filtros de público, clientes a partir dos pedidos, `{nome}`, texto com cupom e link, estimativa de término.
 - `bot/sender.js`: janela de horário, limite diário, retomada no dia seguinte, pausa após 5 falhas, pular opt-out, devolver `enviando` antigo para a fila.
 - SQL: `supabase/tests/cupons.sql`, roda no SQL Editor dentro de uma transação com `rollback` e confere as regras do cupom direto em `place_order` e `check_coupon`.

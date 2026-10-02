@@ -6,9 +6,9 @@ Roda 100% estático no **GitHub Pages**; dados e login ficam no **Supabase** (pl
 | | |
 |---|---|
 | Loja | `index.html`: carrossel de destaques, cardápio, pedido simplificado (nome, WhatsApp, produto, quantidade), novidades, Carteirinha do Formando |
-| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, bot, ajustes |
+| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, clientes, campanhas, cupons, bot, ajustes |
 | Bot | `bot/`: WhatsApp comum conectado por QR Code; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
-| Banco | `supabase/schema.sql`: tabelas, RLS e funções `place_order` / `loyalty_stamps` |
+| Banco | `supabase/schema.sql`: tabelas, RLS e funções `place_order` / `check_coupon` / `loyalty_stamps` |
 | Especificação | [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md) |
 
 ## 1. Testar agora (modo demonstração)
@@ -49,7 +49,7 @@ O arquivo `.nojekyll` garante que todas as pastas sejam servidas como estão.
    ```
 6. Em **Authentication → URL Configuration**, adicione a URL do GitHub Pages.
 
-A chave `anon` pode ficar no código público: o acesso é controlado pelas políticas RLS. Clientes só conseguem criar pedidos pela função `place_order` (preço e custo são calculados no servidor) e consultar a contagem de selos. Pedidos, custos e finanças só são visíveis para usuários na tabela `admins`.
+A chave `anon` pode ficar no código público: o acesso é controlado pelas políticas RLS. Clientes só conseguem criar pedidos pela função `place_order` (preço, custo e desconto são calculados no servidor), conferir um cupom pela `check_coupon` (diz se o código vale, o desconto e se aquele WhatsApp já usou) e consultar a contagem de selos. Pedidos, custos, finanças, clientes, cupons e campanhas só são visíveis para usuários na tabela `admins`.
 
 ## 4. Bot no WhatsApp comum (QR Code)
 
@@ -73,6 +73,8 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 
 - Só mensagens identificadas como encomenda: `menu`, `cardápio` ou `#pedido` (a mensagem inteira, como "me manda o cardápio"), os botões do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX", "Quero receber as novidades") ou o pedido escrito: verbo de pedido perto do produto ("quero 10 brigadeiros"), pergunta de preço ("quanto custa o brigadeiro?") ou mensagem curta que começa pela quantidade ("10 brigadeiros"). Conversas pessoais ficam sem resposta automática, mesmo citando doces ("comi 2 brigadeiros da festa", "comprei caixinhas de leite").
 - Palavras comuns do nome de um produto só contam junto do resto do nome: "caixinha de docinhos", "morango cravejado".
+- Cupom: "cupom VOLTA10" chama o bot quando o cupom existe; no meio de uma conversa vale mandar só o código. Cupom que não existe numa conversa pessoal ("usei o cupom IFOOD10") fica sem resposta.
+- Saída das campanhas e novidades: "parar promoções", "pare de me mandar promoção" e "parar novidades" funcionam sempre; "parar" ou "sair" sozinho vale para quem recebeu campanha nos últimos 30 dias.
 - Depois de entrar na conversa, segue até o pedido terminar ou até 30 min sem resposta. O menu completo aparece no máximo uma vez por conversa.
 - Se alguém da loja responder pelo celular, o bot fica 12 h quieto com aquela pessoa; só `menu`, `cardápio` ou `#pedido` chamam o bot de volta. Pedido para sair das novidades ("parar de receber novidades") funciona sempre.
 - Mensagens que chegam com o bot desligado não recebem resposta atrasada (ficam para a loja responder pelo celular).

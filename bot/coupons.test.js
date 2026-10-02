@@ -27,6 +27,7 @@ test('desconto em porcentagem e em reais', () => {
 test('pedido mínimo', () => {
   assert.deepEqual(check({ min_order: 50 }), { valid: false, message: 'Vale para pedidos a partir de R$ 50,00' });
   assert.equal(check({ min_order: 40 }).valid, true, 'igual ao mínimo vale');
+  assert.equal(check({ min_order: 12.3 }, { subtotal: 3 * 4.1 }).valid, true, '3 x 4,10 chega aos 12,30 (sem erro de ponto flutuante)');
 });
 
 test('vigência por dia inteiro, no horário de Brasília', () => {

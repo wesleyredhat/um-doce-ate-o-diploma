@@ -11,13 +11,15 @@ Objetivo: **receber pedidos com o mínimo de atrito** (site e WhatsApp), **organ
 ```
                  ┌──────────────────────────── GitHub Pages (estático, grátis) ───────────────────────────┐
  Cliente ──────► │ index.html  loja: carrossel, cardápio, pedido, novidades, carteirinha                │
- Confeiteira ──► │ admin.html  painel: login, pedidos, produção, produtos, financeiro, novidades, bot    │
+ Confeiteira ──► │ admin.html  painel: login, pedidos, produção, produtos, financeiro, novidades,        │
+                 │             clientes, campanhas, cupons, bot                                          │
                  └───────────────┬─────────────────────────────────────────────────────────────────────┘
                                  │ supabase-js (HTTPS, chave anon + JWT da admin)
                  ┌───────────────▼──────────────── Supabase (plano gratuito) ─────────────────────────────┐
                  │ Postgres + RLS   products · orders · news · settings · admins · bot_admins ·          │
-                 │                  subscribers · bot_sessions                                           │
-                 │ RPC              place_order() · loyalty_stamps() · is_admin()                        │
+                 │                  subscribers · bot_sessions · coupons · optouts · campaigns ·         │
+                 │                  campaign_sends · view admin_customers                                │
+                 │ RPC              place_order() · check_coupon() · loyalty_stamps() · is_admin()       │
                  │ Auth             e-mail/senha da administradora                                       │
                  │ Edge Function    whatsapp-bot  ◄── webhook ── WhatsApp Cloud API (Meta) ◄── Cliente   │
                  │                  └─ bot-engine.js (mesmo motor do simulador do painel)                │
@@ -44,7 +46,7 @@ Decisões:
 4. **Enviar pedido** → `place_order()` recalcula preços no servidor e devolve o código `DD-XXXX`.
 5. Tela de sucesso com chuva de capelos, código do pedido e botão **Enviar resumo no WhatsApp** (mensagem pronta para a loja).
 6. Nome e telefone ficam guardados no aparelho para a próxima compra; o carrinho sobrevive a recarregamento.
-7. **Cupom** (opcional): campo **Tem cupom?** ou link com `?cupom=CODIGO`. O desconto e o novo total aparecem antes de enviar (`check_coupon()`), e `place_order()` confere tudo de novo no servidor.
+7. **Cupom** (opcional): campo **Tem cupom de desconto?** ou link com `?cupom=CODIGO`. O desconto e o novo total aparecem antes de enviar (`check_coupon()`), e `place_order()` confere tudo de novo no servidor.
 
 Sem cadastro, sem senha, sem pagamento online: o padrão do mercado para confeitarias pequenas é confirmar e cobrar via Pix no WhatsApp, e cada etapa a mais derruba a conversão.
 
@@ -62,8 +64,8 @@ Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · Pix: …
 - **Atalho em linguagem natural**: “quero 10 brigadeiros e 2 empadinhas”, “uma dúzia de casadinhos” → o bot monta o carrinho e pula direto para o nome.
 - **Comandos globais**: `menu`, `oi`, `cancelar`.
 - **Atendimento humano** (opção 5): bot fica em silêncio e avisa a dona (`OWNER_PHONE`) até o cliente mandar `menu`.
-- **Inscrição em novidades** (opção 4) com saída por “parar novidades” ou “parar promoções” (exigência de opt-in da Meta). Quem sai também deixa de receber campanhas.
-- **Cupom**: “cupom VOLTA10” em qualquer momento, ou só o código no meio da conversa, anota o cupom; o resumo mostra o desconto e o total final. Se o cupom deixar de valer na confirmação, o bot explica e oferece seguir sem ele.
+- **Inscrição em novidades** (opção 4) com saída por “parar novidades” ou “parar promoções” (exigência de opt-in da Meta). Quem sai também deixa de receber campanhas, e “parar” ou “sair” sozinho vale como saída para quem recebeu campanha nos últimos 30 dias.
+- **Cupom**: “cupom VOLTA10” em qualquer momento, ou só o código no meio da conversa (se o cupom existir), anota o cupom; o pedido escrito na mesma mensagem segue mesmo se o cupom for recusado, e cupom que não existe numa conversa pessoal fica sem resposta; o resumo mostra o desconto e o total final. Se o cupom deixar de valer na confirmação, o bot explica e oferece seguir sem ele.
 
 ### 2.3 Grupo
 
@@ -89,7 +91,7 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 5. **Novo pedido**: lançamento manual (balcão, telefone, Instagram).
 6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.
 7. **Cupons**: % ou R$, pedido mínimo, vigência por data, cota de usos, uma vez por WhatsApp; mostra usos, vendas e desconto dado.
-8. **Campanhas**: público por filtro (todos, sumidos, por produto, fiéis, top 20, inscritos), mensagem com `{nome}` e cupom opcional, prévia, estimativa de término e progresso. O bot envia uma mensagem a cada 20 a 60 s, no horário e no limite diário configurados.
+8. **Campanhas**: público por filtro (todos, sumidos, quem comprou um produto, 3 pedidos ou mais, os 20 que mais gastaram, inscritos), mensagem com `{nome}` e cupom opcional, prévia, estimativa de término e progresso. O bot envia uma mensagem a cada 20 a 60 s, no horário e no limite diário configurados.
 
 ## 3. Estrutura de dados
 
@@ -100,6 +102,7 @@ orders      (id, code, customer_name, phone, items jsonb, total, cost_total, cha
              items = [{product_id, name, qty, unit_price, unit_cost}]   ← cópia no momento da venda
 news        (id, title, body, image, channels text[site|whatsapp], published, author, created_at)
 settings    (key, value jsonb)        'store' → accepting, notice, pix_key, bot_greeting, fixed_costs[]
+                                      'campaigns' → daily_limit, start_hour, end_hour (só admin)
 admins      (user_id → auth.users, name)
 bot_admins  (id, phone, name, can_post, can_manage_orders)
 subscribers (phone, name, created_at)

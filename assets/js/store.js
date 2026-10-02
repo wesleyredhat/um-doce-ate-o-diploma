@@ -292,6 +292,15 @@ const must = ({ data, error }) => {
   if (error) throw new Error(error.message);
   return data;
 };
+// A API devolve no máximo 1000 linhas por vez: lê de 1000 em 1000 até acabar.
+async function allRows(query) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const page = must(await query().range(from, from + 999));
+    out.push(...page);
+    if (page.length < 1000) return out;
+  }
+}
 
 const SupabaseStore = {
   mode: 'supabase',
@@ -334,15 +343,7 @@ const SupabaseStore = {
   async checkCoupon(code, phone = '', items = []) {
     return must(await sb.rpc('check_coupon', { p_code: code, p_phone: phone ? normalizePhone(phone) : '', p_items: items }));
   },
-  // A API devolve no máximo 1000 linhas por vez.
-  async listCustomers() {
-    const out = [];
-    for (let from = 0; ; from += 1000) {
-      const page = must(await sb.from('admin_customers').select('*').order('phone_key').range(from, from + 999));
-      out.push(...page);
-      if (page.length < 1000) return out;
-    }
-  },
+  async listCustomers() { return allRows(() => sb.from('admin_customers').select('*').order('phone_key')); },
   async listOrders({ since } = {}) {
     let q = sb.from('orders').select('*').order('created_at', { ascending: false }).limit(2000);
     if (since) q = q.gte('created_at', since);
@@ -383,7 +384,7 @@ const SupabaseStore = {
   async getBotSession(phone) { return this._sessions[phone] || null; },
   async saveBotSession(phone, data) { if (data) this._sessions[phone] = data; else delete this._sessions[phone]; },
   async subscribe() {},
-  async listSubscribers() { return must(await sb.from('subscribers').select('*')); },
+  async listSubscribers() { return allRows(() => sb.from('subscribers').select('*').order('phone')); },
 
   async listCoupons() { return must(await sb.from('coupons').select('*').order('created_at', { ascending: false })); },
   async saveCoupon(c) {

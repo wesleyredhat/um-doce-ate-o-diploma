@@ -37,9 +37,10 @@ export function evaluateCoupon(c, { subtotal = 0, uses = 0, usedByPhone = false,
   if (c.ends_on && today > c.ends_on) return no('Cupom expirado');
   if (c.max_uses != null && uses >= c.max_uses) return no('Cupom esgotado');
   if (usedByPhone) return no('Você já usou este cupom');
-  if (subtotal < Number(c.min_order || 0)) return no(`Vale para pedidos a partir de ${brl(c.min_order)}`);
-  const raw = c.kind === 'percent' ? (subtotal * Number(c.value)) / 100 : Number(c.value);
-  return { valid: true, discount: cents(Math.min(subtotal, raw)) };
+  const sub = cents(subtotal); // em centavos, como o numeric do banco: 3 x 4,10 é exatamente 12,30
+  if (sub < cents(c.min_order)) return no(`Vale para pedidos a partir de ${brl(c.min_order)}`);
+  const raw = c.kind === 'percent' ? (sub * Number(c.value)) / 100 : Number(c.value);
+  return { valid: true, discount: cents(Math.min(sub, raw)) };
 }
 
 // Resposta no mesmo formato de check_coupon() do banco.
