@@ -6,7 +6,8 @@ Roda 100% estático no **GitHub Pages**; dados e login ficam no **Supabase** (pl
 | | |
 |---|---|
 | Loja | `index.html`: carrossel de destaques, cardápio, pedido simplificado (nome, WhatsApp, produto, quantidade), novidades, Carteirinha do Formando |
-| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, clientes, campanhas, cupons, bot, ajustes |
+| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, clientes, campanhas, cupons, ajustes |
+| Bot (página) | `bot/index.html`, em `/bot/`: conexão do WhatsApp (QR Code ou código), números autorizados e simulador, fora do painel |
 | Bot | `bot/`: WhatsApp comum conectado por QR Code; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
 | Banco | `supabase/schema.sql`: tabelas, RLS e funções `place_order` / `check_coupon` / `loyalty_stamps` |
 | Especificação | [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md) |
@@ -67,9 +68,9 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
    ```
 3. Abra `bot/.env` e cole em `SUPABASE_SECRET_KEY` a **Secret key** (Supabase → Project Settings → API Keys). Essa chave dá acesso total ao banco: fica só nesse arquivo, que não vai para o GitHub.
 4. `./instalar-servico-mac.sh` → o bot passa a rodar em segundo plano, liga sozinho com o Mac e reinicia se cair (log em `bot/bot.log`; para desinstalar, `./instalar-servico-mac.sh remover`). Para testar no terminal sem instalar: `npm start`.
-5. Conecte o WhatsApp: o QR Code aparece no painel, aba **Bot WhatsApp** (e também no terminal/log). No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie. A mesma aba mostra depois se o bot está online.
+5. Conecte o WhatsApp: o QR Code aparece na página **/bot** do site (`https://umdoceateodiploma.com.br/bot/`, mesmo login do painel; também no terminal/log). No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie. A mesma página mostra depois se o bot está online. Ela não aparece no menu do painel.
    - O QR precisa ser lido pelo próprio WhatsApp (a câmera comum do celular não conecta). Se não ler, aumente o brilho da tela e aproxime o celular.
-   - Alternativa sem QR: preencha `PAIRING_PHONE` no `bot/.env` com o número da loja (55 + DDD + número) e reinicie o bot. O painel mostra um código de 8 letras para digitar em **Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone**.
+   - Alternativa sem QR: preencha `PAIRING_PHONE` no `bot/.env` com o número da loja (55 + DDD + número) e reinicie o bot. A página /bot mostra um código de 8 letras para digitar em **Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone**.
 
 **Quando o bot responde** (o número da loja também é de uso pessoal; regras em `bot/core.js`, testes em `bot/core.test.js`, `npm test`):
 

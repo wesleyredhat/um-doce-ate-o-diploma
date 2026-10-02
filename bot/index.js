@@ -4,7 +4,7 @@
 //   cp .env.example .env    (preencha a chave secreta do Supabase)
 //   npm install && npm start      (ou ./instalar-servico-mac.sh para ficar sempre ligado)
 //
-// O QR Code aparece no terminal e no painel (aba Bot WhatsApp). Quando o bot responde
+// O QR Code aparece no terminal e na página /bot do site. Quando o bot responde
 // e quando fica quieto está em core.js. A sessão do WhatsApp fica em ./auth.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -63,7 +63,7 @@ async function sendText(jid, text) {
   }
 }
 
-// Status lido pela aba "Bot WhatsApp" do painel: online, QR Code para conectar, última vez visto.
+// Status lido pela página /bot do site: online, QR Code para conectar, última vez visto.
 let status = {};
 async function setStatus(patch = {}) {
   status = { ...status, ...patch, last_seen: new Date().toISOString() };
@@ -332,7 +332,7 @@ function onConnection({ connection, lastDisconnect, qr }) {
       console.log('\nNo celular da loja: WhatsApp → Aparelhos conectados → Conectar um aparelho → escaneie (também aparece no painel):\n');
       qrcodeTerminal.generate(qr, { small: true });
     } else if (status.state !== 'qr') {
-      log('Aguardando conexão: o QR Code está no painel (aba Bot WhatsApp).'); // serviço: não desenha o QR no bot.log
+      log('Aguardando conexão: o QR Code está na página /bot do site.'); // serviço: não desenha o QR no bot.log
     }
     // Correção de erro L (menos módulos, então maiores), margem de 4 módulos e 6 px por módulo: lê melhor na tela.
     QRCode.toDataURL(qr, { errorCorrectionLevel: 'L', margin: 4, scale: 6 })
@@ -352,7 +352,7 @@ function onConnection({ connection, lastDisconnect, qr }) {
     let wait = Math.min(60e3, 3e3 * ++attempt);
     if (code === DisconnectReason.loggedOut) {
       // O aparelho foi removido no celular: a sessão não vale mais, então gera um QR Code novo.
-      log('❌ WhatsApp desconectado pelo celular. Gerando um QR Code novo (painel → Bot WhatsApp).');
+      log('❌ WhatsApp desconectado pelo celular. Gerando um QR Code novo (página /bot do site).');
       rmSync(AUTH_DIR, { recursive: true, force: true });
       setStatus({ state: 'desconectado', qr: null, pairing: null, phone: null });
     } else if (code === DisconnectReason.connectionReplaced) {

@@ -11,7 +11,9 @@ import { couponState, couponLabel, normCode } from './coupons.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
 
 const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], couponsError: '', campaigns: [], campaignCfg: {} };
-const VIEWS = {
+// A página /bot/ (bot/index.html) mostra só o bot; o painel (admin.html) não tem essa aba.
+const BOT_PAGE = document.body.dataset.page === 'bot';
+const VIEWS = BOT_PAGE ? { bot: ['Bot WhatsApp', viewBot] } : {
   inicio: ['Início', viewHome],
   pedidos: ['Pedidos', viewOrders],
   producao: ['Produção', viewProduction],
@@ -21,7 +23,6 @@ const VIEWS = {
   clientes: ['Clientes', viewCustomers],
   campanhas: ['Campanhas', viewCampaigns],
   cupons: ['Cupons', viewCoupons],
-  bot: ['Bot WhatsApp', viewBot],
   ajustes: ['Ajustes', viewSettings],
 };
 // Tabela ou função nova que ainda não existe no Supabase: explica o que fazer em vez da mensagem técnica.
@@ -80,7 +81,7 @@ async function enterApp() {
   S.orders.forEach((o) => S.seen.add(o.id));
   addEventListener('hashchange', route);
   route();
-  setInterval(poll, 30000);
+  if (!BOT_PAGE) setInterval(poll, 30000);
 }
 
 $('#logoutBtn').addEventListener('click', async () => {
@@ -89,10 +90,10 @@ $('#logoutBtn').addEventListener('click', async () => {
   location.reload();
 });
 $('#refreshBtn').addEventListener('click', async () => { await loadAll(); render(); toast('Atualizado'); });
-$('#newOrderBtn').addEventListener('click', () => orderDialog());
-$('#moreBtn').addEventListener('click', () => {
+$('#newOrderBtn')?.addEventListener('click', () => orderDialog());
+$('#moreBtn')?.addEventListener('click', () => {
   openDialog(`<h2>Mais</h2><div class="more-grid">
-    ${['produtos', 'novidades', 'clientes', 'campanhas', 'cupons', 'bot', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', campanhas: 'send', cupons: 'tag', bot: 'bot', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
+    ${['produtos', 'novidades', 'clientes', 'campanhas', 'cupons', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', campanhas: 'send', cupons: 'tag', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
     <a href="./" target="_blank">${icon('ext')} Ver loja</a>
     <button id="mLogout">${icon('logout')} Sair</button></div>`, (m) => {
     $('#mLogout', m).onclick = () => $('#logoutBtn').click();
@@ -143,6 +144,7 @@ function chime() {
 }
 
 function updateNewPill() {
+  if (BOT_PAGE) return;
   const n = S.orders.filter((o) => o.status === 'novo').length;
   const pill = $('#navNew');
   pill.hidden = !n;
@@ -155,7 +157,7 @@ function updateNewPill() {
 /* =================================================================== */
 function route() {
   const v = location.hash.slice(1);
-  S.view = VIEWS[v] ? v : 'inicio';
+  S.view = VIEWS[v] ? v : Object.keys(VIEWS)[0];
   render();
 }
 
@@ -935,7 +937,7 @@ function campaignBotLine(b) {
   const line = (color, text) => `<p class="status-line"><span class="dot" style="background:var(--${color})"></span>${text}</p>`;
   if (IS_DEMO) return line('honey', 'Modo demonstração: as campanhas são simuladas e nada é enviado.');
   if (botAlive(b) && b.state === 'online') return line('leaf', 'Bot online: enviando no ritmo abaixo.');
-  return line('honey', 'Bot desligado ou desconectado: os envios ficam parados até ele voltar (aba Bot WhatsApp).');
+  return line('honey', 'Bot desligado ou desconectado: os envios ficam parados até ele voltar (página <a href="bot/">Bot WhatsApp</a>).');
 }
 
 async function viewCampaigns(v, signal) {

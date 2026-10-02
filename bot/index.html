@@ -3,24 +3,25 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Painel da Confeiteira</title>
+  <!-- Página /bot/ do site: os caminhos abaixo partem da raiz, como no admin.html. -->
+  <base href="../" />
+  <title>Bot WhatsApp</title>
   <meta name="robots" content="noindex, nofollow" />
   <meta name="theme-color" content="#3a2116" />
   <link rel="icon" href="favicon.png" />
-  <link rel="manifest" href="manifest.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Fredoka:wght@400;500;600&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/base.css" />
   <link rel="stylesheet" href="assets/css/admin.css" />
 </head>
-<body>
+<body data-page="bot">
   <!-- LOGIN -->
   <section class="login" id="loginView" hidden>
     <form class="login__card" id="loginForm">
       <img src="assets/img/logo.png" alt="" width="84" height="84" class="login__logo" />
       <p class="eyebrow">Área restrita</p>
-      <h1 class="script">Painel da Confeiteira</h1>
+      <h1 class="script">Bot WhatsApp</h1>
       <label class="field"><span>E-mail</span><input class="input" name="email" type="email" autocomplete="username" required /></label>
       <label class="field"><span>Senha</span><input class="input" name="password" type="password" autocomplete="current-password" required /></label>
       <p class="err" id="loginErr" role="alert"></p>
@@ -35,23 +36,14 @@
     <aside class="side" id="side">
       <a class="side__brand" href="./" target="_blank" rel="noopener" title="Abrir a loja">
         <img src="assets/img/logo.png" alt="" width="40" height="40" />
-        <span><b>Um Doce</b><small>painel</small></span>
+        <span><b>Um Doce</b><small>bot</small></span>
       </a>
-      <nav class="side__nav" id="sideNav" aria-label="Painel">
-        <a href="#inicio" data-view="inicio"><i data-i="home"></i><span>Início</span></a>
-        <a href="#pedidos" data-view="pedidos"><i data-i="bag"></i><span>Pedidos</span><b class="pill" id="navNew" hidden>0</b></a>
-        <a href="#producao" data-view="producao"><i data-i="chef"></i><span>Produção</span></a>
-        <a href="#produtos" data-view="produtos"><i data-i="box"></i><span>Produtos</span></a>
-        <a href="#financeiro" data-view="financeiro"><i data-i="cash"></i><span>Financeiro</span></a>
-        <a href="#novidades" data-view="novidades"><i data-i="news"></i><span>Novidades</span></a>
-        <a href="#clientes" data-view="clientes"><i data-i="users"></i><span>Clientes</span></a>
-        <a href="#campanhas" data-view="campanhas"><i data-i="send"></i><span>Campanhas</span></a>
-        <a href="#cupons" data-view="cupons"><i data-i="tag"></i><span>Cupons</span></a>
-        <a href="#ajustes" data-view="ajustes"><i data-i="gear"></i><span>Ajustes</span></a>
+      <nav class="side__nav" aria-label="Bot">
+        <a href="bot/" data-view="bot"><i data-i="bot"></i><span>Bot WhatsApp</span></a>
+        <a href="admin.html"><i data-i="home"></i><span>Painel</span></a>
       </nav>
       <div class="side__foot">
         <span class="mode" id="modeBadge"></span>
-        <button class="btn btn--soft btn--sm" id="logoutBtn"><i data-i="logout"></i> Sair</button>
       </div>
     </aside>
 
@@ -59,24 +51,15 @@
       <header class="bar">
         <div>
           <p class="bar__date" id="today"></p>
-          <h1 class="bar__title" id="viewTitle">Início</h1>
+          <h1 class="bar__title" id="viewTitle">Bot WhatsApp</h1>
         </div>
         <div class="bar__actions">
           <button class="icon-btn" id="refreshBtn" title="Atualizar" aria-label="Atualizar"><i data-i="refresh"></i></button>
-          <button class="btn btn--sm" id="newOrderBtn"><i data-i="plus"></i><span>Novo pedido</span></button>
+          <button class="btn btn--soft btn--sm" id="logoutBtn"><i data-i="logout"></i> Sair</button>
         </div>
       </header>
       <div id="view" class="view"></div>
     </main>
-
-    <!-- Tab bar (celular) -->
-    <nav class="tabbar" aria-label="Atalhos">
-      <a href="#inicio" data-view="inicio"><i data-i="home"></i><span>Início</span></a>
-      <a href="#pedidos" data-view="pedidos"><i data-i="bag"></i><span>Pedidos</span></a>
-      <a href="#producao" data-view="producao"><i data-i="chef"></i><span>Produção</span></a>
-      <a href="#financeiro" data-view="financeiro"><i data-i="cash"></i><span>Finanças</span></a>
-      <button type="button" id="moreBtn"><i data-i="menu"></i><span>Mais</span></button>
-    </nav>
   </div>
 
   <dialog id="dlg"><div class="modal" id="dlgBody"></div></dialog>

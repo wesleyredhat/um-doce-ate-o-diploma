@@ -3,7 +3,7 @@
 #   ./instalar-servico-mac.sh            instala/atualiza
 #   ./instalar-servico-mac.sh remover    desinstala
 # Antes: npm install e a Secret key do Supabase no arquivo .env.
-# Se o WhatsApp ainda não estiver conectado, o QR Code aparece no painel (aba Bot WhatsApp).
+# Se o WhatsApp ainda não estiver conectado, o QR Code aparece na página /bot do site.
 # Pode rodar por ssh, desde que o mesmo usuário esteja logado na tela do Mac.
 set -euo pipefail
 
@@ -64,7 +64,7 @@ EOF
 for _ in 1 2 3; do
   if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
     echo "✅ Bot instalado. Ele liga sozinho no login e reinicia se cair."
-    echo "   Para conectar o WhatsApp: painel → Bot WhatsApp (QR Code). Log: tail -f \"$DIR/bot.log\""
+    echo "   Para conectar o WhatsApp: página /bot do site (QR Code). Log: tail -f \"$DIR/bot.log\""
     exit 0
   fi
   sleep 2

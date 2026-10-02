@@ -12,7 +12,8 @@ Objetivo: **receber pedidos com o mínimo de atrito** (site e WhatsApp), **organ
                  ┌──────────────────────────── GitHub Pages (estático, grátis) ───────────────────────────┐
  Cliente ──────► │ index.html  loja: carrossel, cardápio, pedido, novidades, carteirinha                │
  Confeiteira ──► │ admin.html  painel: login, pedidos, produção, produtos, financeiro, novidades,        │
-                 │             clientes, campanhas, cupons, bot                                          │
+                 │             clientes, campanhas, cupons                                               │
+                 │ bot/        página /bot/: conexão do WhatsApp, números autorizados, simulador         │
                  └───────────────┬─────────────────────────────────────────────────────────────────────┘
                                  │ supabase-js (HTTPS, chave anon + JWT da admin)
                  ┌───────────────▼──────────────── Supabase (plano gratuito) ─────────────────────────────┐
@@ -92,6 +93,7 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.
 7. **Cupons**: % ou R$, pedido mínimo, vigência por data, cota de usos, uma vez por WhatsApp; mostra usos, vendas e desconto dado.
 8. **Campanhas**: público por filtro (todos, sumidos, quem comprou um produto, 3 pedidos ou mais, os 20 que mais gastaram, inscritos), mensagem com `{nome}` e cupom opcional, prévia, estimativa de término e progresso. O bot envia uma mensagem a cada 20 a 60 s, no horário e no limite diário configurados.
+9. **Bot WhatsApp** fica fora do menu do painel, na página `/bot/` (`bot/index.html`, mesmo login): conexão do WhatsApp (QR Code ou código), números autorizados e simulador.
 
 ## 3. Estrutura de dados
 
