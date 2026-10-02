@@ -46,6 +46,9 @@ create index if not exists orders_phone_idx on public.orders (phone);
 create index if not exists orders_status_idx on public.orders (status);
 alter table public.orders add column if not exists coupon_code text;
 alter table public.orders add column if not exists discount numeric(10, 2) not null default 0;
+-- Entrega: 'ponto' = lugar fixo com dia marcado (settings.store.delivery_spot), 'combinar' = outro local ou retirada.
+alter table public.orders add column if not exists delivery text not null default 'combinar' check (delivery in ('ponto', 'combinar'));
+alter table public.orders add column if not exists delivery_date date;
 
 create table if not exists public.news (
   id uuid primary key default gen_random_uuid(),
@@ -204,8 +207,10 @@ end $$;
 
 -- Cria o pedido calculando preço, custo e desconto NO SERVIDOR (o cliente nunca define valores).
 drop function if exists public.place_order(text, text, jsonb, text, text);
+drop function if exists public.place_order(text, text, jsonb, text, text, text);
 create or replace function public.place_order(
-  p_name text, p_phone text, p_items jsonb, p_channel text default 'web', p_notes text default '', p_coupon text default null
+  p_name text, p_phone text, p_items jsonb, p_channel text default 'web', p_notes text default '', p_coupon text default null,
+  p_delivery text default 'combinar', p_delivery_date date default null
 ) returns json
 -- "extensions": no Supabase o pgcrypto (gen_random_bytes, usado no código do pedido) fica nesse esquema.
 language plpgsql security definer set search_path = public, extensions as $$
@@ -218,8 +223,10 @@ declare
   v_code text;
   r record;
   v_accepting boolean;
+  v_spot jsonb;
+  v_today date := (now() at time zone 'America/Sao_Paulo')::date;
 begin
-  select coalesce((value->>'accepting')::boolean, true) into v_accepting from settings where key = 'store';
+  select coalesce((value->>'accepting')::boolean, true), value->'delivery_spot' into v_accepting, v_spot from settings where key = 'store';
   if v_accepting is false and not is_admin() then
     raise exception 'Não estamos aceitando encomendas no momento';
   end if;
@@ -240,6 +247,13 @@ begin
   end loop;
   if jsonb_array_length(v_items) = 0 then raise exception 'Produto indisponível'; end if;
 
+  -- Entrega no ponto: um dos dias marcados em Ajustes, de amanhã até 14 dias (mesma regra de delivery.js).
+  if coalesce(p_delivery, 'combinar') not in ('ponto', 'combinar') then raise exception 'Forma de entrega inválida'; end if;
+  if p_delivery = 'ponto' and (p_delivery_date is null or p_delivery_date <= v_today or p_delivery_date > v_today + 14
+     or not coalesce(v_spot->'days' @> to_jsonb(extract(dow from p_delivery_date)::int), false)) then
+    raise exception 'Escolha um dos dias de entrega disponíveis';
+  end if;
+
   if v_coupon is not null then
     v_discount := coupon_discount(v_coupon, p_phone, v_total, true);
   end if;
@@ -249,11 +263,13 @@ begin
     exit when length(v_code) = 7 and not exists (select 1 from orders where code = v_code);
   end loop;
 
-  insert into orders (code, customer_name, phone, items, total, cost_total, channel, notes, coupon_code, discount)
+  insert into orders (code, customer_name, phone, items, total, cost_total, channel, notes, coupon_code, discount, delivery, delivery_date)
   values (v_code, trim(p_name), regexp_replace(p_phone, '\D', '', 'g'), v_items, v_total - v_discount, v_cost, p_channel,
-          left(coalesce(p_notes, ''), 300), v_coupon, v_discount);
+          left(coalesce(p_notes, ''), 300), v_coupon, v_discount, coalesce(p_delivery, 'combinar'),
+          case when p_delivery = 'ponto' then p_delivery_date end);
 
-  return json_build_object('code', v_code, 'total', v_total - v_discount, 'subtotal', v_total, 'discount', v_discount, 'coupon', v_coupon);
+  return json_build_object('code', v_code, 'total', v_total - v_discount, 'subtotal', v_total, 'discount', v_discount, 'coupon', v_coupon,
+                           'delivery', coalesce(p_delivery, 'combinar'), 'delivery_date', case when p_delivery = 'ponto' then p_delivery_date end);
 end $$;
 
 -- Cartão fidelidade: retorna só a contagem (não expõe pedidos).
@@ -362,7 +378,7 @@ select b.k as phone_key, b.phone, b.name, b.orders, b.spent, b.first_order, b.la
   exists (select 1 from optouts x where x.phone_key = b.k) as opted_out
 from base b left join prods p on p.k = b.k;
 
-grant execute on function public.place_order(text, text, jsonb, text, text, text) to anon, authenticated;
+grant execute on function public.place_order(text, text, jsonb, text, text, text, text, date) to anon, authenticated;
 grant execute on function public.check_coupon(text, text, jsonb) to anon, authenticated;
 -- coupon_discount só é chamada por place_order e check_coupon.
 revoke execute on function public.coupon_discount(text, text, numeric, boolean) from public, anon, authenticated;
@@ -434,6 +450,10 @@ create policy "order_notices admin" on public.order_notices for all using (publi
 insert into public.settings (key, value) values
   ('store', '{"accepting": true, "notice": "Encomendas com 1 dia de antecedência", "pix_key": "", "bot_greeting": "Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma."}')
 on conflict (key) do nothing;
+
+-- Entrega com dia marcado (segunda, terça, quarta e sexta): só preenche se ainda não existe; depois vale o que estiver em Ajustes.
+update public.settings set value = value || '{"delivery_spot": {"label": "Na faculdade, em dia de aula", "days": [1, 2, 3, 5]}}'
+where key = 'store' and not (value ? 'delivery_spot');
 
 insert into public.settings (key, value) values
   ('campaigns', '{"daily_limit": 80, "start_hour": 9, "end_hour": 20}')

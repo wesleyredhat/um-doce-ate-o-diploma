@@ -3,6 +3,7 @@ import { store, ready } from './store.js';
 import { icon, hydrateIcons } from './icons.js';
 import { $, $$, esc, money, fmtDate, waLink, maskPhoneInput, isValidPhone, toast } from './utils.js';
 import { isCouponError, normCode } from './coupons.js';
+import { spotOf, deliveryDates, dayLabel, deliveryText } from '../../supabase/functions/_shared/delivery.js';
 
 const CART_KEY = 'um-doce-ate-o-diploma:cart';
 const ME_KEY = 'um-doce-ate-o-diploma:me';
@@ -359,6 +360,10 @@ function wireForm() {
     $('#submitBtn').disabled = true;
     $('#formErr').textContent = 'No momento não estamos aceitando encomendas.';
   }
+  renderDelivery();
+  form.addEventListener('change', (e) => {
+    if (e.target.name === 'delivery') $('#deliveryDays').hidden = e.target.value !== 'ponto';
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -369,6 +374,9 @@ function wireForm() {
     if (!cart.length) { err.textContent = 'Escolha pelo menos um produto 🍫'; return; }
     if (form.name.value.trim().length < 2) { form.name.setAttribute('aria-invalid', 'true'); form.name.focus(); err.textContent = 'Informe seu nome.'; return; }
     if (!isValidPhone(form.phone.value)) { form.phone.setAttribute('aria-invalid', 'true'); form.phone.focus(); err.textContent = 'Confira o WhatsApp com DDD.'; return; }
+    const delivery = chosenDelivery();
+    if (!delivery) { err.textContent = 'Escolha como prefere receber.'; $('#deliveryBox').scrollIntoView({ block: 'center' }); return; }
+    if (delivery.delivery === 'ponto' && !delivery.delivery_date) { err.textContent = 'Escolha o dia da entrega.'; return; }
 
     const btn = $('#submitBtn');
     btn.disabled = true;
@@ -389,20 +397,25 @@ function wireForm() {
         items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
         channel: 'web',
         coupon: coupon.code || null,
+        ...delivery,
       });
       saveJSON(ME_KEY, { name: form.name.value.trim(), phone: form.phone.value });
-      showDone(r, form.name.value.trim(), snapshot);
+      showDone(r, form.name.value.trim(), snapshot, delivery);
       $('#couponIn').value = '';
       setCoupon('');
       if (location.search) history.replaceState(null, '', location.pathname + location.hash); // o link com ?cupom= já foi usado
       cart = [];
       saveCart();
       form.notes.value = '';
+      renderDelivery();
       renderLines();
       renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
     } catch (ex) {
       console.error(ex);
-      if (isCouponError(ex.message)) {
+      if (/dias de entrega/.test(ex.message)) {
+        renderDelivery(); // a página ficou aberta e o dia passou (ou mudou em Ajustes): mostra as datas de agora
+        err.textContent = 'Esse dia não está mais disponível. Escolha outro, por favor.';
+      } else if (isCouponError(ex.message)) {
         await refreshCoupon(); // atualiza o motivo ao lado do campo antes de mostrar a recusa
         couponBlocked(`${ex.message}.`);
       } else err.textContent = 'Não foi possível enviar agora. Tente de novo ou peça pelo WhatsApp.';
@@ -413,17 +426,41 @@ function wireForm() {
   });
 }
 
-function showDone(r, name, lines) {
+function showDone(r, name, lines, delivery) {
   $('#doneName').textContent = name.split(' ')[0];
   $('#doneCode').textContent = r.code;
   const off = Number(r.discount) > 0 ? `\nCupom ${r.coupon}: −${money(r.discount)}` : '';
-  const msg = `Oi! Acabei de fazer o pedido *${r.code}* pelo site 🎓\n\n${lines.map((l) => `• ${l.qty}x ${l.p.name}`).join('\n')}${off}\n\nTotal: *${money(r.total)}*\nNome: ${name}`;
+  const where = delivery.delivery ? `\nEntrega: ${deliveryText(delivery, settings)}` : '';
+  const msg = `Oi! Acabei de fazer o pedido *${r.code}* pelo site 🎓\n\n${lines.map((l) => `• ${l.qty}x ${l.p.name}`).join('\n')}${off}\n\nTotal: *${money(r.total)}*\nNome: ${name}${where}`;
   $('#doneWa').href = waLink(msg);
   const dlg = $('#doneDialog');
   dlg.showModal();
   capsRain();
 }
 $('#doneClose').addEventListener('click', () => $('#doneDialog').close());
+
+/* ---------- entrega ---------- */
+// "Como prefere receber?" só aparece com entrega de dia marcado em Ajustes (delivery.js); sem isso, é "combinar".
+function renderDelivery() {
+  const spot = spotOf(settings);
+  const dates = deliveryDates(settings);
+  const box = $('#deliveryBox');
+  box.hidden = !spot || !dates.length;
+  if (box.hidden) return;
+  $('#spotLabel').textContent = spot.label;
+  $$('[name="delivery"]', box).forEach((i) => { i.checked = false; });
+  $('#deliveryDays').hidden = true;
+  $('#deliveryDays').innerHTML = dates.map((d) => `<label class="dday"><input type="radio" name="delivery_date" value="${d}" /><span>${dayLabel(d)}</span></label>`).join('');
+}
+
+// {} sem a pergunta na tela; null se ainda não escolheu.
+function chosenDelivery() {
+  if ($('#deliveryBox').hidden) return {};
+  const mode = $('#deliveryBox [name="delivery"]:checked')?.value;
+  if (!mode) return null;
+  if (mode === 'combinar') return { delivery: 'combinar' };
+  return { delivery: 'ponto', delivery_date: $('#deliveryDays [name="delivery_date"]:checked')?.value || '' };
+}
 
 function capsRain() {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;

@@ -6,6 +6,7 @@ import { CONFIG, IS_DEMO } from './config.js';
 import { uid, orderCode, normalizePhone, sha256 } from './utils.js';
 import { quoteCoupon, phoneKey, normCode } from './coupons.js';
 import { customersFromOrders } from './campaigns.js';
+import { deliveryDates, DELIVERY_MAX_DAYS } from '../../supabase/functions/_shared/delivery.js';
 
 export const STATUSES = [
   { id: 'novo', label: 'Novo', color: 'var(--berry)' },
@@ -97,6 +98,7 @@ function seedDemo() {
     notice: 'Encomendas com 1 dia de antecedência',
     pix_key: '',
     bot_greeting: 'Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma.',
+    delivery_spot: { label: 'Na faculdade, em dia de aula', days: [1, 2, 3, 5] },
   });
   write('subscribers', []);
   write('coupons', [{ id: uid(), code: 'VOLTA10', kind: 'percent', value: 10, min_order: 0, starts_on: null, ends_on: null, max_uses: 50, active: true, created_at: new Date(now).toISOString() }]);
@@ -111,7 +113,7 @@ function buildOrder({ customer_name, phone, items, channel = 'web', status = 'no
   const cost_total = items.reduce((s, it) => s + it.qty * it.unit_cost, 0);
   const ts = created_at || new Date().toISOString();
   return { id: uid(), code: orderCode(), customer_name, phone: normalizePhone(phone), items, total, cost_total, channel, status, notes,
-    created_at: ts, updated_at: ts, coupon_code: null, discount: 0 };
+    created_at: ts, updated_at: ts, coupon_code: null, discount: 0, delivery: 'combinar', delivery_date: null };
 }
 
 const DemoStore = {
@@ -144,7 +146,7 @@ const DemoStore = {
   },
   async deleteProduct(id) { write('products', read('products', []).filter((p) => p.id !== id)); },
 
-  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null }) {
+  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null }) {
     const products = read('products', []);
     const lines = items.map(({ product_id, qty }) => {
       const p = products.find((x) => x.id === product_id && x.active);
@@ -153,6 +155,11 @@ const DemoStore = {
     });
     if (!lines.length) throw new Error('Escolha ao menos um produto');
     const order = buildOrder({ customer_name: customer_name.trim(), phone, items: lines, channel, notes });
+    // Mesma regra de place_order: um dos dias marcados em Ajustes, de amanhã até 14 dias.
+    if (delivery === 'ponto') {
+      if (!deliveryDates(read('settings', {}), Date.now(), DELIVERY_MAX_DAYS).includes(delivery_date)) throw new Error('Escolha um dos dias de entrega disponíveis');
+      Object.assign(order, { delivery, delivery_date });
+    }
     const subtotal = order.total;
     if (normCode(coupon)) {
       const q = await this.checkCoupon(coupon, phone, items);
@@ -160,7 +167,7 @@ const DemoStore = {
       Object.assign(order, { coupon_code: q.code, discount: q.discount, total: q.total });
     }
     write('orders', [order, ...read('orders', [])]);
-    return { code: order.code, total: order.total, subtotal, discount: order.discount, coupon: order.coupon_code };
+    return { code: order.code, total: order.total, subtotal, discount: order.discount, coupon: order.coupon_code, delivery: order.delivery, delivery_date: order.delivery_date };
   },
   async checkCoupon(code, phone = '', items = []) {
     const c = read('coupons', []).find((x) => x.code === normCode(code));
@@ -341,10 +348,11 @@ const SupabaseStore = {
   },
   async deleteProduct(id) { must(await sb.from('products').delete().eq('id', id)); },
 
-  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null }) {
-    // Sem cupom, a chamada é a mesma de antes do schema novo: pedido continua funcionando enquanto o banco não é atualizado.
+  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null }) {
+    // Sem cupom e sem entrega no ponto, a chamada é a mesma de antes do schema novo: pedido continua funcionando enquanto o banco não é atualizado.
     const args = { p_name: customer_name, p_phone: normalizePhone(phone), p_items: items, p_channel: channel, p_notes: notes };
     if (normCode(coupon)) args.p_coupon = normCode(coupon);
+    if (delivery === 'ponto') Object.assign(args, { p_delivery: 'ponto', p_delivery_date: delivery_date });
     return must(await sb.rpc('place_order', args));
   },
   async checkCoupon(code, phone = '', items = []) {

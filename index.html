@@ -120,6 +120,12 @@
               <input class="input" name="phone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="(11) 90000-0000" />
             </label>
           </div>
+          <fieldset class="delivery" id="deliveryBox" hidden>
+            <legend>Como prefere receber?</legend>
+            <label class="dopt"><input type="radio" name="delivery" value="ponto" /><span>🎓 <span id="spotLabel"></span></span></label>
+            <div class="ddays" id="deliveryDays" role="radiogroup" aria-label="Dia da entrega" hidden></div>
+            <label class="dopt"><input type="radio" name="delivery" value="combinar" /><span>📍 Outro local ou retirada (combinamos pelo WhatsApp)</span></label>
+          </fieldset>
           <details class="notes">
             <summary>Adicionar observação (opcional)</summary>
             <textarea class="textarea" name="notes" maxlength="300" placeholder="Ex.: retirar quinta às 10h"></textarea>

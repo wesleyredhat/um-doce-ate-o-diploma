@@ -23,7 +23,7 @@ const COUPONS = {
 };
 const subtotalOf = (items) => items.reduce((s, i) => s + i.qty * PRODUCTS.find((p) => p.id === i.product_id).price, 0);
 
-function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [], orderStatus = 'novo' } = {}) {
+function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [], orderStatus = 'novo', store = {}, orderError = '' } = {}) {
   let clock = Date.parse('2026-10-02T12:00:00Z');
   const rows = new Map();
   const orders = [];
@@ -44,7 +44,7 @@ function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [
   };
   const ctx = {
     listProducts: async () => PRODUCTS,
-    getSettings: async () => ({ pix_key: 'pix@doce.com' }),
+    getSettings: async () => ({ pix_key: 'pix@doce.com', ...store }),
     isAdmin: async (phone) => admins.find((a) => samePhone(a.phone, phone)) || null,
     listNews: async () => [],
     // igual ao bot: ao sair, diz se a pessoa estava inscrita
@@ -54,6 +54,7 @@ function setup({ admins = [], failOrder = false, subscribed = [], campaignTo = [
     checkCoupon,
     placeOrder: async (o) => {
       if (failOrder) throw new Error('banco fora do ar');
+      if (orderError) throw new Error(orderError);
       const subtotal = subtotalOf(o.items);
       let discount = 0;
       if (o.coupon) {
@@ -205,8 +206,10 @@ test('mensagem do site com código não duplica o pedido', async () => {
   // o Pix vai na confirmação (bot/notices.js), não aqui
   assert.match(r, /confirmo por aqui, já com a chave Pix/);
   assert.doesNotMatch(r, /pix@doce\.com/);
-  // já confirmado: repete a chave para quem pergunta
-  assert.match((await setup({ orderStatus: 'confirmado' }).say(msg))[0], /Já está confirmado ✅ Pix: \*pix@doce\.com\*/);
+  // já confirmado: manda o Pix Copia e Cola de novo para quem pergunta
+  const again = await setup({ orderStatus: 'confirmado' }).say(msg);
+  assert.match(again[0], /Já está confirmado ✅ O Pix Copia e Cola vai na próxima mensagem/);
+  assert.match(again[1], /^000201.*pix@doce\.com.*540540\.00.*6304[0-9A-F]{4}$/);
   assert.doesNotMatch(r, /Para quem é o pedido/);
   assert.equal(orders.length, 0);
   // celular antigo sem o 9 no WhatsApp: ainda reconhece que o pedido é da mesma pessoa
@@ -541,4 +544,59 @@ test('cupom em maiúsculas sem número, e código sozinho no meio do carrinho', 
   await say('1');
   await say('10');
   assert.match((await say('VOLTA10'))[0], /anotado[\s\S]*Quer mais alguma coisa/);
+});
+
+// Entrega com dia marcado (Ajustes); o relógio dos testes é sexta, 02/10/2026, 9h em Brasília.
+const SPOT = { delivery_spot: { label: 'Na faculdade, em dia de aula', days: [1, 2, 3, 5] } };
+
+test('entrega no ponto: depois do nome pergunta a forma e o dia, e o pedido vai com a data', async () => {
+  const { say, orders } = setup({ store: SPOT });
+  await say('quero 10 brigadeiros');
+  const ask = (await say('Ana Souza'))[0];
+  assert.match(ask, /Como prefere receber\?\n\*1\* 🎓 Na faculdade, em dia de aula\n\*2\* 📍 Outro local ou retirada/);
+  const days = (await say('1'))[0];
+  assert.match(days, /\*1\* - segunda, 05\/10\n\*2\* - terça, 06\/10\n\*3\* - quarta, 07\/10\n\*4\* - sexta, 09\/10/);
+  assert.match((await say('quinta'))[0], /Qual dia\?/, 'quinta não está entre as opções: pergunta de novo');
+  const sum = (await say('sexta'))[0];
+  assert.match(sum, /📍 Entrega: Na faculdade, em dia de aula · sexta, 09\/10/);
+  assert.match(sum, /\*1\* ✅ Confirmar/);
+  const done = (await say('1'))[0];
+  assert.match(done, /📍 Entrega: Na faculdade, em dia de aula · sexta, 09\/10/);
+  assert.equal(orders[0].delivery, 'ponto');
+  assert.equal(orders[0].delivery_date, '2026-10-09');
+});
+
+test('entrega: dia pelo número ou pela data; outro local vai sem data', async () => {
+  const a = setup({ store: SPOT });
+  await a.say('quero 10 brigadeiros'); await a.say('Ana'); await a.say('1');
+  assert.match((await a.say('2'))[0], /terça, 06\/10/);
+  const b = setup({ store: SPOT });
+  await b.say('quero 10 brigadeiros'); await b.say('Ana'); await b.say('1');
+  assert.match((await b.say('7/10'))[0], /quarta, 07\/10/);
+  const c = setup({ store: SPOT });
+  await c.say('quero 10 brigadeiros'); await c.say('Ana');
+  assert.match((await c.say('sim'))[0], /Como prefere receber/, 'resposta solta repete a pergunta');
+  assert.match((await c.say('2'))[0], /📍 Entrega: Outro local ou retirada \(combinamos pelo WhatsApp\)/);
+  await c.say('1');
+  assert.equal(c.orders[0].delivery, undefined, 'combinar é o padrão do banco');
+});
+
+test('entrega: dia que deixou de valer volta para a pergunta; sem ponto em Ajustes não pergunta', async () => {
+  const a = setup({ store: SPOT, orderError: 'Escolha um dos dias de entrega disponíveis' });
+  await a.say('quero 10 brigadeiros'); await a.say('Ana'); await a.say('1'); await a.say('1');
+  assert.match((await a.say('1'))[0], /Esse dia não está mais disponível[\s\S]*Como prefere receber/);
+  const b = setup();
+  await b.say('quero 10 brigadeiros');
+  assert.match((await b.say('Ana'))[0], /\*1\* ✅ Confirmar/);
+});
+
+test('entrega: adicionar mais itens depois não pergunta de novo', async () => {
+  const { say, orders } = setup({ store: SPOT });
+  await say('quero 10 brigadeiros'); await say('Ana'); await say('2');
+  assert.match((await say('2'))[0], /Mande o número do produto/);
+  await say('2'); await say('3');
+  assert.match((await say('0'))[0], /Para quem é o pedido/);
+  assert.match((await say('Ana'))[0], /📍 Entrega: Outro local[\s\S]*Confirmar/);
+  await say('1');
+  assert.equal(orders.length, 1);
 });

@@ -161,6 +161,17 @@ body::before {
 .empty-lines { text-align: center; padding: 18px; border: 1.5px dashed var(--latte); border-radius: 16px; color: var(--ink-soft); }
 .row2 { display: grid; gap: 14px; }
 @media (min-width: 560px) { .row2 { grid-template-columns: 1fr 1fr; } }
+.delivery { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.delivery legend { font-weight: 700; color: var(--cocoa); font-size: 0.92rem; padding: 0; margin-bottom: 8px; }
+.dopt { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: #fff; border: 1.5px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; font-weight: 700; color: var(--choc); }
+.dopt:has(input:checked) { border-color: var(--caramel); box-shadow: 0 0 0 3px rgba(185, 138, 99, 0.18); }
+.dopt input { accent-color: var(--choc); width: 18px; height: 18px; flex: none; margin: 0; }
+.ddays { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 4px 4px; }
+.dday { position: relative; }
+.dday input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.dday span { display: inline-block; padding: 0.45em 0.9em; border-radius: 999px; background: var(--sand); color: var(--choc); font-weight: 700; font-size: 0.88rem; }
+.dday input:checked + span { background: var(--choc); color: var(--paper); }
+.dday input:focus-visible + span { outline: 2px solid var(--caramel); outline-offset: 2px; }
 .notes summary { cursor: pointer; font-weight: 700; color: var(--cocoa); font-size: 0.92rem; }
 .notes textarea { margin-top: 8px; }
 .order-total { display: flex; justify-content: space-between; align-items: baseline; padding-top: 12px; border-top: 1.5px dashed var(--latte); }

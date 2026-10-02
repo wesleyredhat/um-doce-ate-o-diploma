@@ -27,13 +27,18 @@ function setup({ notices = [], online = true, jid = (p) => `${p}@s.whatsapp.net`
   return { rows, sent, tick: () => queue.tick() };
 }
 
-test('confirmação: itens e total, e a chave Pix sozinha numa segunda mensagem', () => {
-  const [a, b] = noticeTexts('confirmado', ORDER, { pix_key: 'pix@doce.com' });
+test('confirmação: itens e total, o cartão Pix do WhatsApp e o Pix Copia e Cola', () => {
+  const [a, card, b] = noticeTexts('confirmado', ORDER, { pix_key: 'pix@doce.com' });
+  assert.deepEqual(card, { pixCard: { merchant_name: 'Um Doce Até o Diploma', key: 'pix@doce.com', key_type: 'EMAIL' } });
+  const [, phoneCard] = noticeTexts('confirmado', ORDER, { pix_key: '11941776869' });
+  assert.deepEqual(phoneCard.pixCard, { merchant_name: 'Um Doce Até o Diploma', key: '+5511941776869', key_type: 'PHONE' }, 'celular com +55');
   assert.match(a, /^Oi, Ana! Seu pedido \*DD-K7P2\* está confirmado ✅/);
   assert.match(a, /• 10x Brigadeiro\n• 2x Empadinha\nTotal: \*R\$ 66,00\*/);
-  assert.match(a, /Pix desse valor para a chave abaixo/);
+  assert.match(a, /toque em \*Copiar chave Pix\* aqui embaixo e faça um Pix de \*R\$ 66,00\*/);
+  assert.match(a, /\*Pix Copia e Cola\* da última mensagem/);
   assert.match(a, /comprovante/);
-  assert.equal(b, 'pix@doce.com');
+  assert.match(b, /^000201/, 'segunda mensagem: só o código');
+  assert.ok(b.includes('0112pix@doce.com') && b.includes('540566.00') && b.includes('0506DDK7P2'), b);
 });
 
 test('confirmação com cupom mostra o desconto; sem chave Pix vai uma mensagem só', () => {
@@ -53,9 +58,10 @@ test('pronto: disponível para entrega', () => {
 test('envia a confirmação e marca como enviada', async () => {
   const { rows, sent, tick } = setup({ notices: [{ kind: 'confirmado', order: ORDER }] });
   await tick();
-  assert.equal(sent.length, 2);
+  assert.equal(sent.length, 3);
   assert.equal(sent[0].j, '5511988887777@s.whatsapp.net');
-  assert.equal(sent[1].text, 'pix@doce.com');
+  assert.equal(sent[1].text.pixCard.key, 'pix@doce.com');
+  assert.match(sent[2].text, /^000201.*6304[0-9A-F]{4}$/);
   assert.equal(rows[0].status, 'enviada');
   assert.equal(rows[0].sent_at, new Date(NOW).toISOString());
 });
@@ -67,7 +73,7 @@ test('Pix vale enquanto o pedido anda na esteira; cancelado pula', async () => {
   ] });
   await tick();
   assert.deepEqual(rows.map((r) => r.status), ['enviada', 'pulada']);
-  assert.equal(sent.length, 2);
+  assert.equal(sent.length, 3);
 });
 
 test('pedido que voltou atrás espera; "pronto" de pedido já entregue pula', async () => {
@@ -113,4 +119,21 @@ test('aviso que outra cópia já pegou não é enviado de novo', async () => {
   await tick();
   assert.equal(rows[0].status, 'pendente');
   assert.equal(sent.length, 0);
+});
+
+test('entrega no ponto: confirmação e pronto citam o lugar e o dia', () => {
+  const store = { pix_key: 'pix@doce.com', delivery_spot: { label: 'Na faculdade, em dia de aula', days: [1, 2, 3, 5] } };
+  const o = { ...ORDER, delivery: 'ponto', delivery_date: '2026-10-09' };
+  assert.match(noticeTexts('confirmado', o, store)[0], /Total: \*R\$ 66,00\*\n📍 Entrega: Na faculdade, em dia de aula · sexta, 09\/10\n\n💸/);
+  const [ready] = noticeTexts('pronto', o, store);
+  assert.match(ready, /prontinho 🎓🍫\n📍 Entrega: Na faculdade, em dia de aula · sexta, 09\/10/);
+  assert.doesNotMatch(ready, /combina/);
+  assert.doesNotMatch(noticeTexts('confirmado', ORDER, store)[0], /Entrega/, 'combinar: sem linha de entrega');
+});
+
+test('pronto com observação do pedido: repete o que a cliente escreveu em vez de perguntar', () => {
+  const [a] = noticeTexts('pronto', { ...ORDER, notes: 'retirar quinta às 10h' }, {});
+  assert.match(a, /📝 Você escreveu: "retirar quinta às 10h"\nSe algo mudou, me avisa por aqui/);
+  assert.doesNotMatch(a, /Me conta o melhor horário/);
+  assert.match(noticeTexts('pronto', { ...ORDER, notes: '  ' }, {})[0], /Me conta o melhor horário/, 'observação em branco não conta');
 });

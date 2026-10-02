@@ -1,9 +1,12 @@
 // Avisos automáticos do pedido pelo WhatsApp. Um gatilho do banco (orders_notice, em supabase/schema.sql)
 // cria o aviso quando o status muda na esteira do painel:
-//   - confirmado: confirmação com itens e total e, numa segunda mensagem, só a chave Pix (fácil de copiar);
-//   - pronto: pedido disponível para entrega.
+//   - confirmado: confirmação com itens e total, o cartão Pix do WhatsApp (botão "Copiar chave Pix") e o Pix Copia e Cola (já com o valor);
+//   - pronto: pedido disponível para entrega (na entrega com dia marcado, o lugar e o dia).
 // Aviso de pedido que voltou atrás espera; de pedido cancelado (ou "pronto" já entregue) e com mais de 1 dia, pula.
 // Sem Baileys nem Supabase aqui: index.js liga isso ao WhatsApp e notices.test.js testa com dados falsos.
+import { deliveryText } from '../supabase/functions/_shared/delivery.js';
+import { orderPix } from '../supabase/functions/_shared/pix.js';
+
 export const NOTICE_MAX_AGE_MS = 864e5;
 
 const brl = (v) => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
@@ -13,14 +16,26 @@ const WAIT = { confirmado: ['novo'], pronto: ['novo', 'confirmado', 'producao'] 
 
 export function noticeTexts(kind, o, store = {}) {
   const first = o.customer_name.split(' ')[0];
+  const spot = o.delivery === 'ponto' && o.delivery_date;
   if (kind === 'pronto') {
+    // Usa o que a cliente já informou (dia marcado ou observação do pedido) em vez de perguntar de novo.
+    if (spot) return [`Oi, ${first}! Seu pedido *${o.code}* está prontinho 🎓🍫\n📍 Entrega: ${deliveryText(o, store)}\nTe espero lá 💛`];
+    const notes = String(o.notes || '').trim();
+    if (notes) return [`Oi, ${first}! Seu pedido *${o.code}* está prontinho e disponível para entrega 🎓🍫\n📝 Você escreveu: "${notes}"\nSe algo mudou, me avisa por aqui 💛`];
     return [`Oi, ${first}! Seu pedido *${o.code}* está prontinho e disponível para entrega 🎓🍫\nMe conta o melhor horário e o local que a gente combina por aqui 💛`];
   }
   const items = o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n');
   const off = Number(o.discount) > 0 ? ` (já com ${brl(o.discount)} de desconto)` : '';
-  const head = `Oi, ${first}! Seu pedido *${o.code}* está confirmado ✅\n${items}\nTotal: *${brl(o.total)}*${off}`;
-  if (!store.pix_key) return [`${head}\n\nJá já combinamos o pagamento por aqui 💛`];
-  return [`${head}\n\n💸 Para pagar, faça um Pix desse valor para a chave abaixo e mande o comprovante por aqui 💛`, store.pix_key];
+  const where = spot ? `\n📍 Entrega: ${deliveryText(o, store)}` : '';
+  const head = `Oi, ${first}! Seu pedido *${o.code}* está confirmado ✅\n${items}\nTotal: *${brl(o.total)}*${off}${where}`;
+  const pix = orderPix(store, o);
+  if (!pix) return [`${head}\n\nJá já combinamos o pagamento por aqui 💛`];
+  // O cartão não é oficial no WhatsApp comum e pode não aparecer em algum celular: o Copia e Cola vem logo depois.
+  return [
+    `${head}\n\n💸 Para pagar, toque em *Copiar chave Pix* aqui embaixo e faça um Pix de *${brl(o.total)}*, ou copie o código *Pix Copia e Cola* da última mensagem, que já vai com o valor. Depois me manda o comprovante por aqui 💛`,
+    { pixCard: pix.card },
+    pix.code,
+  ];
 }
 
 // db: settings() → settings.store, pending() → [{id, kind, created_at, order}], claim(id) → true se pegou, mark(id, campos)

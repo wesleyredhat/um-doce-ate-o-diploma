@@ -77,7 +77,8 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 - Só mensagens identificadas como encomenda: `menu`, `cardápio` ou `#pedido` (a mensagem inteira, como "me manda o cardápio"), os botões do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX", "Quero receber as novidades") ou o pedido escrito: verbo de pedido perto do produto ("quero 10 brigadeiros"), pergunta de preço ("quanto custa o brigadeiro?") ou mensagem curta que começa pela quantidade ("10 brigadeiros"). Conversas pessoais ficam sem resposta automática, mesmo citando doces ("comi 2 brigadeiros da festa", "comprei caixinhas de leite").
 - Palavras comuns do nome de um produto só contam junto do resto do nome: "caixinha de docinhos", "morango cravejado".
 - Cupom: "cupom VOLTA10" chama o bot quando o cupom existe; no meio de uma conversa vale mandar só o código. Cupom que não existe numa conversa pessoal ("usei o cupom IFOOD10") fica sem resposta.
-- **Avisos do pedido** (automáticos, pela esteira do painel): ao **Confirmar**, o bot manda a confirmação com os itens e o total e, numa segunda mensagem, só a chave Pix (Ajustes → Chave Pix), pedindo o comprovante; ao chegar em **Pronto**, avisa que está disponível para entrega. A mensagem de pedido recebido não leva o Pix: ele vai só na confirmação. Cada aviso sai uma vez por pedido; com o bot desligado, sai quando ele voltar (até 1 dia depois).
+- **Forma de entrega** (site e bot, antes de fechar o pedido): "Como prefere receber?" com a entrega de dia marcado de Ajustes (padrão: "Na faculdade, em dia de aula", segunda, terça, quarta e sexta) e as próximas 4 datas a partir de amanhã, ou "Outro local ou retirada (combinamos pelo WhatsApp)". O banco confere o dia de novo; o cartão do pedido no painel mostra 📍 com o dia. Sem dias marcados em Ajustes, a pergunta some.
+- **Avisos do pedido** (automáticos, pela esteira do painel): ao **Confirmar**, o bot manda a confirmação com os itens, o total e a entrega, o cartão Pix do WhatsApp (botão "Copiar chave Pix") e o **Pix Copia e Cola** já com o valor (Ajustes → Chave Pix e tipo da chave), pedindo o comprovante; ao chegar em **Pronto**, avisa que está disponível para entrega, com o lugar e o dia escolhidos ou a observação do pedido, se houver. O cartão Pix não é oficial no WhatsApp comum e pode deixar de aparecer numa atualização; o Copia e Cola vai sempre. A mensagem de pedido recebido não leva o Pix: ele vai só na confirmação. Cada aviso sai uma vez por pedido; com o bot desligado, sai quando ele voltar (até 1 dia depois).
 - Saída das campanhas e novidades: "parar promoções", "pare de me mandar promoção" e "parar novidades" funcionam sempre; "parar" ou "sair" sozinho vale para quem recebeu campanha nos últimos 30 dias.
 - Depois de entrar na conversa, segue até o pedido terminar ou até 30 min sem resposta. O menu completo aparece no máximo uma vez por conversa.
 - Se alguém da loja responder pelo celular, o bot fica 12 h quieto com aquela pessoa; só `menu`, `cardápio` ou `#pedido` chamam o bot de volta. Pedido para sair das novidades ("parar de receber novidades") funciona sempre.
@@ -93,7 +94,7 @@ A alternativa oficial (WhatsApp Business Cloud API, paga por conversa) continua 
 
 ## 5. Clientes, campanhas e cupons
 
-Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode o `supabase/tests/cupons.sql` e o `supabase/tests/avisos.sql`, que conferem as regras do cupom e dos avisos do pedido direto no banco: os dois precisam terminar sem erro e desfazem tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
+Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode os testes `supabase/tests/cupons.sql`, `avisos.sql` e `entrega.sql`, que conferem as regras do cupom, dos avisos e da entrega direto no banco: todos precisam terminar sem erro e desfazem tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
 
 - **Clientes** (painel): todo mundo que já comprou, agrupado pelo WhatsApp (com e sem o 9 é a mesma pessoa), com número de pedidos, total gasto, último pedido e o que mais compra.
 - **Cupons**: desconto em % ou em R$, pedido mínimo, vigência por data (dia inteiro, horário de Brasília) e cota de usos. Cada WhatsApp usa uma vez, e pedido cancelado devolve o uso. Vale no site (o link `?cupom=CODIGO` já aplica) e no bot ("cupom CODIGO"). Prefira código com número, como VOLTA10.
@@ -116,6 +117,9 @@ supabase/
   schema.sql
   tests/cupons.sql                    testes das regras do cupom no banco
   tests/avisos.sql                    testes dos avisos do pedido (Pix, pronto)
+  tests/entrega.sql                   testes da forma de entrega no place_order
+  functions/_shared/delivery.js       forma de entrega (site, bot e painel)
+  functions/_shared/pix.js            Pix Copia e Cola (BR Code) e cartão Pix
   functions/_shared/bot-engine.js     motor de conversa (navegador + Deno)
   functions/whatsapp-bot/index.ts     webhook + envio de novidades
 docs/ESPECIFICACAO.md  docs/plans/ (desenho e plano de clientes, campanhas e cupons)

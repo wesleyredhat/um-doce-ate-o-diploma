@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import makeWASocket, { Browsers, DisconnectReason, fetchLatestWaWebVersion, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
+import makeWASocket, { Browsers, DisconnectReason, fetchLatestWaWebVersion, generateWAMessageFromContent, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import { createClient } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -61,6 +61,24 @@ async function sendText(jid, text) {
     return true;
   } catch (e) {
     console.error('falha ao enviar', jid, e.message);
+    return false;
+  }
+}
+
+// Cartão Pix do WhatsApp (nome, chave e botão "Copiar chave Pix"), o mesmo que o WhatsApp Business manda.
+// Não é oficial no WhatsApp comum: precisa da marca "biz" no envio e pode deixar de aparecer numa
+// atualização do WhatsApp; por isso os avisos mandam o Pix Copia e Cola logo depois (notices.js).
+async function sendPixCard(jid, card) {
+  try {
+    const params = JSON.stringify({ payment_settings: [{ type: 'pix_static_code', pix_static_code: card }] });
+    const msg = generateWAMessageFromContent(jid, {
+      interactiveMessage: { body: { text: '' }, nativeFlowMessage: { buttons: [{ name: 'payment_info', buttonParamsJson: params }] } },
+    }, { userJid: sock.user?.id });
+    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id, additionalNodes: [{ tag: 'biz', attrs: { native_flow_name: 'payment_info' } }] });
+    sentIds.add(msg.key.id);
+    return true;
+  } catch (e) {
+    console.error('falha ao enviar o cartão Pix', jid, e.message);
     return false;
   }
 }
@@ -131,6 +149,7 @@ const ctx = {
     // Sem cupom, a chamada é a mesma de antes do schema novo (pedido funciona mesmo com o banco desatualizado).
     const { data, error } = await db.rpc('place_order', {
       p_name: o.customer_name, p_phone: o.phone, p_items: o.items, p_channel: o.channel, p_notes: '', ...(o.coupon ? { p_coupon: o.coupon } : {}),
+      ...(o.delivery === 'ponto' ? { p_delivery: 'ponto', p_delivery_date: o.delivery_date } : {}),
     });
     if (error) throw new Error(error.message);
     return data;
@@ -223,12 +242,13 @@ const notices = createNotices({
   db: {
     settings: () => ctx.getSettings(),
     pending: async () => must(await db.from('order_notices')
-      .select('id, kind, created_at, order:orders(id, code, customer_name, phone, items, total, discount, status)')
+      .select('id, kind, created_at, order:orders(id, code, customer_name, phone, items, total, discount, status, notes, delivery, delivery_date)')
       .eq('status', 'pendente').order('id').limit(50)),
     claim: async (id) => !!must(await db.from('order_notices').update({ status: 'enviando' }).eq('id', id).eq('status', 'pendente').select('id')).length,
     mark: async (id, patch) => must(await db.from('order_notices').update(patch).eq('id', id)),
   },
-  wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
+  // Texto ou { pixCard } (cartão Pix); cartão que falhar não segura o Copia e Cola que vem depois.
+  wa: { online: () => online, lookup: lookupJid, send: async (jid, m) => (typeof m === 'string' ? sendText(jid, m) : (await sendPixCard(jid, m.pixCard), true)) },
   log,
 });
 let noticeTick = Promise.resolve(); // o desligamento espera o aviso em andamento

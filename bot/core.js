@@ -67,6 +67,7 @@ export function createCore({ ctx, sessions, now = () => Date.now(), log = consol
     let saved = false;
     const engineCtx = {
       ...ctx,
+      now,
       getSession: async () => session,
       saveSession: async (phone, data) => { saved = true; session = data; await sessions.save(phone, data); },
     };

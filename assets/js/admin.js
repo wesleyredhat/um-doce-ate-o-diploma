@@ -9,6 +9,8 @@ import {
 } from './utils.js';
 import { couponState, couponLabel, normCode } from './coupons.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
+import { WEEKDAYS, dayLabel, deliveryText } from '../../supabase/functions/_shared/delivery.js';
+import { PIX_TYPES, orderPix, pixKey, pixKeyType } from '../../supabase/functions/_shared/pix.js';
 
 const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], couponsError: '', campaigns: [], campaignCfg: {} };
 // A página /bot/ (bot/index.html) mostra só o bot; o painel (admin.html) não tem essa aba.
@@ -33,6 +35,9 @@ const NEXT_LABEL = { novo: 'Confirmar', confirmado: 'Produzir', producao: 'Pront
 const st = (id) => STATUSES.find((s) => s.id === id) || STATUSES[0];
 const prodById = (id) => S.products.find((p) => p.id === id);
 const marginClass = (m) => (m >= 55 ? 'good' : m >= 35 ? 'ok' : 'bad');
+// Entrega no ponto com dia marcado: "sex 09/10" no cartão e na lista de produção.
+const shortDay = (iso) => { const [w, dm] = dayLabel(iso).split(', '); return `${w.slice(0, 3)} ${dm}`; };
+const atSpot = (o) => o.delivery === 'ponto' && !!o.delivery_date;
 let viewAC;
 
 hydrateIcons();
@@ -317,7 +322,7 @@ function orderCard(o) {
   const s = st(o.status);
   const fresh = !S.seen.has(o.id);
   return `<article class="ocard ${fresh ? 'fresh' : ''}" style="--st:${s.color}" draggable="true" data-id="${o.id}">
-    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
+    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
     <div class="ocard__who">${esc(o.customer_name)} <a href="${waLink('', o.phone)}" target="_blank" rel="noopener" style="font-weight:600;font-size:.82rem;color:var(--ink-soft)">${formatPhone(o.phone)}</a></div>
     <ul>${o.items.map((i) => `<li>${i.qty}× ${esc(i.name)}</li>`).join('')}</ul>
     ${o.notes ? `<div class="ocard__notes">📝 ${esc(o.notes)}</div>` : ''}
@@ -333,11 +338,11 @@ function orderCard(o) {
 function notifyLink(o) {
   const first = o.customer_name.split(' ')[0];
   const items = o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n');
-  const pix = S.settings.pix_key ? `\n💸 Pix: ${S.settings.pix_key}` : '';
+  const pix = orderPix(S.settings, o);
   const stamps = S.orders.filter((x) => x.phone === o.phone && x.status === 'entregue').length + (o.status === 'entregue' ? 0 : 1);
   const msg = {
     novo: `Oi, ${first}! Recebemos seu pedido *${o.code}* 🎓\n${items}\nTotal: *${money(o.total)}*\n\nPosso confirmar?`,
-    confirmado: `Oi, ${first}! Pedido *${o.code}* confirmado ✅\n${items}\nTotal: *${money(o.total)}*${pix}`,
+    confirmado: `Oi, ${first}! Pedido *${o.code}* confirmado ✅\n${items}\nTotal: *${money(o.total)}*${pix ? `\n\n💸 Pix Copia e Cola (já com o valor):\n${pix.code}` : ''}`,
     producao: `Oi, ${first}! Seu pedido *${o.code}* já está no forno 👩‍🍳💛`,
     pronto: `Oi, ${first}! Seu pedido *${o.code}* está prontinho 🎓🍫 Vamos combinar a entrega?`,
     entregue: `Obrigada pelo pedido, ${first}! 💛 Você está com ${stamps % CONFIG.LOYALTY_GOAL || CONFIG.LOYALTY_GOAL}/${CONFIG.LOYALTY_GOAL} capelos na Carteirinha do Formando.`,
@@ -491,7 +496,7 @@ function viewProduction(v) {
   todo.forEach((o) => o.items.forEach((i) => {
     const a = (agg[i.product_id] ||= { id: i.product_id, name: i.name, qty: 0, orders: [] });
     a.qty += i.qty;
-    a.orders.push(`${o.code} · ${o.customer_name} · ${i.qty} un${o.status === 'novo' ? ' (não confirmado)' : ''}`);
+    a.orders.push(`${o.code} · ${o.customer_name} · ${i.qty} un${atSpot(o) ? ` · entrega ${shortDay(o.delivery_date)}` : ''}${o.status === 'novo' ? ' (não confirmado)' : ''}`);
   }));
   const rows = Object.values(agg).sort((a, b) => b.qty - a.qty);
   const cost = todo.reduce((s, o) => s + Number(o.cost_total), 0);
@@ -1291,9 +1296,21 @@ function viewSettings(v, signal) {
         <form class="form" id="sf">
           <label class="switch"><input type="checkbox" name="accepting" ${s.accepting !== false ? 'checked' : ''}/><i></i>Aceitando encomendas</label>
           <label class="field"><span>Aviso no topo do site</span><input class="input" name="notice" value="${esc(s.notice || '')}" placeholder="Ex.: Encomendas com 1 dia de antecedência" /></label>
-          <label class="field"><span>Chave Pix (enviada na confirmação)</span><input class="input" name="pix_key" value="${esc(s.pix_key || '')}" /></label>
+          <div class="row2" style="display:grid;gap:12px;grid-template-columns:1fr 150px">
+            <label class="field"><span>Chave Pix (vai no Pix Copia e Cola da confirmação)</span><input class="input" name="pix_key" value="${esc(s.pix_key || '')}" /></label>
+            <label class="field"><span>Tipo da chave</span><select class="select" name="pix_key_type"><option value="">Automático</option>${Object.entries(PIX_TYPES).map(([k, l]) => `<option value="${k}" ${s.pix_key_type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          </div>
+          <p class="hint" id="pixRead" style="margin-top:-6px"></p>
           <label class="field"><span>Saudação do bot</span><input class="input" name="bot_greeting" value="${esc(s.bot_greeting || '')}" /></label>
           <div class="form__actions"><button class="btn" type="submit">Salvar</button></div>
+        </form>
+      </section>
+      <section class="panel"><div class="panel__head"><div><h2>Entrega com dia marcado</h2><p>Site e bot perguntam "Como prefere receber?" com esta opção e as próximas datas, a partir de amanhã. A outra opção é combinar pelo WhatsApp.</p></div></div>
+        <form class="form" id="df">
+          <label class="field"><span>Texto da opção</span><input class="input" name="label" maxlength="60" value="${esc(s.delivery_spot?.label || '')}" placeholder="Ex.: Na faculdade, em dia de aula" /></label>
+          <div class="field" role="group" aria-label="Dias da semana"><span>Dias da semana</span><div class="chips" style="flex-wrap:wrap;gap:10px 16px">${WEEKDAYS.map((w, i) => `<label class="switch"><input type="checkbox" name="d${i}" ${s.delivery_spot?.days?.includes(i) ? 'checked' : ''}/><i></i>${w}</label>`).join('')}</div></div>
+          <p class="hint">Sem dias marcados (ou sem texto), a pergunta some e todo pedido fica para combinar.</p>
+          <div class="form__actions"><button class="btn" type="submit">Salvar entrega</button></div>
         </form>
       </section>
       <section class="panel"><div class="panel__head"><div><h2>Custos fixos mensais</h2><p>Usados no lucro líquido estimado</p></div></div>
@@ -1315,9 +1332,25 @@ function viewSettings(v, signal) {
   $('#sf', v).onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target;
-    await store.saveSettings({ accepting: f.accepting.checked, notice: f.notice.value.trim(), pix_key: f.pix_key.value.trim(), bot_greeting: f.bot_greeting.value.trim() });
+    await store.saveSettings({ accepting: f.accepting.checked, notice: f.notice.value.trim(), pix_key: f.pix_key.value.trim(), pix_key_type: f.pix_key_type.value, bot_greeting: f.bot_greeting.value.trim() });
     S.settings = await store.getSettings();
     toast('Ajustes salvos');
+  };
+  // Como o Pix vai ler a chave: celular precisa do +55, e 11 dígitos podem ser CPF ou celular.
+  const pixRead = () => {
+    const f = $('#sf', v);
+    const key = f.pix_key.value.trim();
+    const type = f.pix_key_type.value || pixKeyType(key);
+    $('#pixRead', v).innerHTML = key ? `No Pix: <b>${esc(PIX_TYPES[type])}</b> ${esc(pixKey(key, type))}. Se o tipo estiver errado, escolha ao lado.` : '';
+  };
+  pixRead();
+  $('#sf', v).addEventListener('input', pixRead, { signal });
+  $('#df', v).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    await store.saveSettings({ delivery_spot: { label: f.label.value.trim(), days: WEEKDAYS.map((_, i) => i).filter((i) => f[`d${i}`].checked) } });
+    S.settings = await store.getSettings();
+    toast('Entrega salva');
   };
   $('#addFixed', v).onclick = () => {
     const i = $$('#fixed .mline', v).length;

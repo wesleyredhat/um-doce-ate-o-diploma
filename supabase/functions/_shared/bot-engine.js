@@ -4,7 +4,9 @@
 //
 // handleMessage(msg, ctx) -> Promise<string[]>  (respostas a enviar, em ordem)
 //   msg: { phone, text, profileName, isGroup }
-//   ctx: adaptador de dados (ver README / whatsapp-bot/index.ts; findOrder é opcional)
+//   ctx: adaptador de dados (ver README / whatsapp-bot/index.ts; findOrder e now são opcionais)
+import { spotOf, deliveryDates, dayLabel, deliveryText, COMBINE_LABEL } from './delivery.js';
+import { orderPix } from './pix.js';
 
 const brl = (v) => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -236,7 +238,7 @@ const CONFIRM_OPTIONS = '\n\n*1* ✅ Confirmar\n*2* ➕ Adicionar mais itens\n*3
 // Resumo do pedido com o desconto do cupom, conferido de novo a cada vez (o carrinho pode ter mudado).
 // Cupom que não vale mais sai da sessão; se só falta chegar ao pedido mínimo, continua anotado.
 async function summary(s, ctx, phone) {
-  const head = `Seu pedido até aqui:\n${cartText(s.cart)}`;
+  const head = `Seu pedido até aqui:\n${cartText(s.cart)}${s.delivery_label ? `\n📍 Entrega: ${s.delivery_label}` : ''}`;
   const subtotal = cartTotal(s.cart);
   if (!s.coupon || !ctx.checkCoupon) return `${head}\n*Total: ${brl(subtotal)}*`;
   const r = await ctx.checkCoupon(s.coupon, phone, cartItems(s.cart));
@@ -246,8 +248,20 @@ async function summary(s, ctx, phone) {
   return `${head}\n⚠️ Cupom ${code} não aplicado: ${r.message}.\n*Total: ${brl(subtotal)}*`;
 }
 
+// Forma de entrega (delivery.js): perguntada depois do nome, se a loja tem entrega com dia marcado em Ajustes.
+const deliveryAsk = (settings) => `Como prefere receber?\n*1* 🎓 ${spotOf(settings).label}\n*2* 📍 ${COMBINE_LABEL}`;
+const daysAsk = (dates) => `Qual dia? Mande o *número*:\n${dates.map((d, i) => `*${i + 1}* - ${dayLabel(d)}`).join('\n')}`;
+// "2", "sexta", "sex", "09/10": o dia escolhido entre as datas oferecidas
+function pickDay(t, dates = []) {
+  if (/^\d$/.test(t)) return dates[Number(t) - 1];
+  const dm = /^(\d{1,2})\/(\d{1,2})$/.exec(t);
+  if (dm) return dates.find((d) => Number(d.slice(8, 10)) === Number(dm[1]) && Number(d.slice(5, 7)) === Number(dm[2]));
+  const w = t.split(/[\s,-]+/)[0];
+  return w.length >= 3 ? dates.find((d) => norm(dayLabel(d)).startsWith(w)) : undefined;
+}
+
 // Pergunta da etapa em que a conversa está: repetida depois de anotar (ou recusar) um cupom.
-async function stepPrompt(s, ctx, phone, products, profileName) {
+async function stepPrompt(s, ctx, phone, products, profileName, settings = {}) {
   const askName = `Para quem é o pedido? Mande seu *nome*${profileName ? ` ou *1* para usar "${profileName}"` : ''}.`;
   switch (s.state) {
     case 'product': return `O que vai ser? Mande o *número* do produto:\n\n${catalogText(products)}`;
@@ -258,6 +272,8 @@ async function stepPrompt(s, ctx, phone, products, profileName) {
     }
     case 'more': return `Quer mais alguma coisa? Mande o *número* de outro produto ou *0* para finalizar.\n\n${catalogText(products)}`;
     case 'name': return `${await summary(s, ctx, phone)}\n\n${askName}`;
+    case 'delivery': return spotOf(settings) ? deliveryAsk(settings) : `${await summary(s, ctx, phone)}${CONFIRM_OPTIONS}`;
+    case 'delivery_day': return daysAsk(s.dates || []);
     case 'confirm': return `${await summary(s, ctx, phone)}${CONFIRM_OPTIONS}`;
     default: return 'Mande *1* para encomendar ou escreva direto, tipo "quero 10 brigadeiros".';
   }
@@ -300,6 +316,7 @@ export async function handleMessage(msg, ctx) {
   const text = String(msg.text || '').trim();
   const t = norm(text);
   const phone = msg.phone;
+  const clock = ctx.now?.() ?? Date.now();
 
   // Comandos de administradora (só para números autorizados no painel)
   if (text.startsWith('#') && !/^#pedido\b/i.test(text)) {
@@ -352,11 +369,12 @@ export async function handleMessage(msg, ctx) {
     await save(null);
     const o = await ctx.findOrder?.(code);
     if (!o || !samePhone(o.phone, phone)) return [`Recebi sua mensagem sobre o pedido *${code}* 💛 Já vamos conferir e te respondemos por aqui!`];
-    // Já confirmado: o aviso com o Pix saiu (bot/notices.js), então repete a chave para quem pergunta.
-    const next = o.status && o.status !== 'novo'
-      ? (settings.pix_key ? `\n\nJá está confirmado ✅ Pix: *${settings.pix_key}*` : '\n\nJá está confirmado ✅')
-      : AFTER_ORDER;
-    return [`🎓 Pedido *${o.code}* recebido! ✅\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}\nTotal: *${brl(o.total)}*${next}\n\nTe aviso por aqui quando estiver pronto 💛`];
+    // Já confirmado: o aviso com o Pix saiu (bot/notices.js), então manda o Pix Copia e Cola de novo para quem pergunta.
+    const pix = o.status && o.status !== 'novo' ? orderPix(settings, o) : null;
+    const next = !o.status || o.status === 'novo' ? AFTER_ORDER
+      : pix ? '\n\nJá está confirmado ✅ O Pix Copia e Cola vai na próxima mensagem.' : '\n\nJá está confirmado ✅';
+    const reply = `🎓 Pedido *${o.code}* recebido! ✅\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}\nTotal: *${brl(o.total)}*${next}\n\nTe aviso por aqui quando estiver pronto 💛`;
+    return pix ? [reply, pix.code] : [reply];
   }
   if (s.state === 'human') return []; // atendimento humano em andamento
 
@@ -408,7 +426,7 @@ export async function handleMessage(msg, ctx) {
   // Mensagem só com o cupom: responde e repete a pergunta da etapa em que a conversa estava.
   if (note || refused) {
     if (s.state === 'menu' && s.cart?.length) s = { ...s, state: 'more' };
-    const prompt = await stepPrompt(s, ctx, phone, products, msg.profileName);
+    const prompt = await stepPrompt(s, ctx, phone, products, msg.profileName, settings);
     await save(s);
     return [`${note || refused}\n\n${prompt}`];
   }
@@ -468,7 +486,7 @@ export async function handleMessage(msg, ctx) {
       if (!qty || qty < 1 || qty > 500) return ['Me manda só o número, tipo *6* 🙂'];
       const cart = s.cart || [];
       addToCart(cart, p, qty);
-      await save({ state: 'more', cart, coupon: s.coupon });
+      await save({ state: 'more', cart, coupon: s.coupon, delivery: s.delivery, delivery_date: s.delivery_date, delivery_label: s.delivery_label });
       return [`Anotado: ${qty}x ${p.name} ✅\n\nQuer mais alguma coisa? Mande o *número* de outro produto ou *0* para finalizar.\n\n${catalogText(products)}`];
     }
 
@@ -479,10 +497,31 @@ export async function handleMessage(msg, ctx) {
       if (size < 2 || size > 80 || /^\d+$/.test(name) || name.includes('?') || LAUGH.test(clean(norm(name))) || !/[a-z]/.test(norm(name))) {
         return ['Me diz seu *nome*, por favor 🙂'];
       }
-      const next = { ...s, state: 'confirm', name };
-      const sum = await summary(next, ctx, phone);
+      const next = { ...s, name, state: !s.delivery && spotOf(settings) ? 'delivery' : 'confirm' };
       await save(next);
-      return [`${sum}${CONFIRM_OPTIONS}`];
+      if (next.state === 'delivery') return [deliveryAsk(settings)];
+      return [`${await summary(next, ctx, phone)}${CONFIRM_OPTIONS}`];
+    }
+
+    case 'delivery':
+    case 'delivery_day': {
+      const choose = async (patch) => {
+        const next = { ...s, ...patch, state: 'confirm', dates: undefined };
+        await save(next);
+        return [`${await summary(next, ctx, phone)}${CONFIRM_OPTIONS}`];
+      };
+      if (s.state === 'delivery_day') {
+        const day = pickDay(t, s.dates);
+        if (!day) return [daysAsk(s.dates || [])];
+        return choose({ delivery: 'ponto', delivery_date: day, delivery_label: deliveryText({ delivery: 'ponto', delivery_date: day }, settings) });
+      }
+      const dates = spotOf(settings) && t === '1' ? deliveryDates(settings, clock) : [];
+      if (dates.length) {
+        await save({ ...s, state: 'delivery_day', dates });
+        return [daysAsk(dates)];
+      }
+      if (spotOf(settings) && t !== '2') return [deliveryAsk(settings)];
+      return choose({ delivery: 'combinar', delivery_date: null, delivery_label: COMBINE_LABEL });
     }
 
     case 'confirm': {
@@ -498,8 +537,14 @@ export async function handleMessage(msg, ctx) {
           r = await ctx.placeOrder({
             customer_name: s.name, phone, channel: s.fromGroup ? 'grupo' : 'whatsapp', items: cartItems(s.cart),
             ...(use ? { coupon: use } : {}),
+            ...(s.delivery === 'ponto' ? { delivery: 'ponto', delivery_date: s.delivery_date } : {}),
           });
         } catch (e) {
+          // O dia escolhido deixou de valer (a conversa virou a noite, ou mudou em Ajustes): escolhe de novo.
+          if (/dias de entrega/.test(e.message) && spotOf(settings)) {
+            await save({ ...s, state: 'delivery', delivery: undefined, delivery_date: undefined, delivery_label: undefined });
+            return [`Esse dia não está mais disponível 🙈\n\n${deliveryAsk(settings)}`];
+          }
           // O cupom deixou de valer entre o resumo e a confirmação (esgotou, expirou): segue sem ele.
           if (!use || !COUPON_ERROR.test(e.message)) throw e;
           const next = { ...s, coupon: undefined };
@@ -508,7 +553,8 @@ export async function handleMessage(msg, ctx) {
         }
         await save(null);
         const off = Number(r.discount) > 0 ? ` (já com ${brl(r.discount)} de desconto)` : '';
-        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${off}${AFTER_ORDER}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
+        const where = s.delivery_label ? `\n📍 Entrega: ${s.delivery_label}` : '';
+        return [`🎓 Pedido *${r.code}* recebido!\nTotal: *${brl(r.total)}*${off}${where}${AFTER_ORDER}\n\nTe aviso por aqui quando estiver pronto. Obrigada, ${s.name.split(' ')[0]}! 💛`];
       }
       if (t === '2') {
         await save({ ...s, state: 'more' });
