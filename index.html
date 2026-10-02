@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Um Doce Até o Diploma</title>
+  <meta name="description" content="Brigadeiros, casadinhos, morango cravejado e empadinhas feitos com carinho. Encomende pelo site ou WhatsApp." />
+  <meta name="theme-color" content="#5b3522" />
+  <meta property="og:title" content="Um Doce Até o Diploma" />
+  <meta property="og:description" content="Doces que adoçam sua jornada ♡ Encomende pelo site ou WhatsApp." />
+  <meta property="og:image" content="assets/img/brigadeiro-casadinho.jpg" />
+  <link rel="icon" href="favicon.png" />
+  <link rel="apple-touch-icon" href="assets/img/icon-192.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Fredoka:wght@400;500;600&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/base.css" />
+  <link rel="stylesheet" href="assets/css/shop.css" />
+</head>
+<body>
+  <div id="demoRibbon" class="demo-ribbon" hidden>
+    Modo demonstração — pedidos ficam só neste navegador. <a href="admin.html">Abrir painel</a>
+  </div>
+  <div id="notice" class="notice" hidden></div>
+
+  <header class="top">
+    <a class="brand" href="#inicio" aria-label="Um Doce Até o Diploma — início">
+      <img src="assets/img/logo.png" alt="" width="44" height="44" />
+      <span><b>Um Doce</b><small>até o diploma</small></span>
+    </a>
+    <nav class="nav" aria-label="Principal">
+      <a href="#cardapio">Cardápio</a>
+      <a href="#novidades">Novidades</a>
+      <a href="#carteirinha">Carteirinha</a>
+    </nav>
+    <a class="btn btn--sm bag-btn" href="#pedido" aria-label="Ir para o pedido">
+      <i data-i="bag"></i><span>Pedido</span><b class="bag-count" id="bagCount">0</b>
+    </a>
+  </header>
+
+  <main>
+    <!-- HERO -->
+    <section class="hero" id="inicio">
+      <svg class="blob blob--tl" viewBox="0 0 200 200" aria-hidden="true"><path d="M0 0h190c-10 40-60 30-80 70S60 150 0 170Z"/></svg>
+      <div class="hero__copy">
+        <p class="eyebrow">Sabores especiais para a sua rotina</p>
+        <h1>
+          <span class="script h1-a">Doces que</span>
+          <span class="script h1-b">adoçam sua</span>
+          <span class="script h1-c">jornada <i data-i="heart" class="h1-heart"></i></span>
+        </h1>
+        <p class="lead">Brigadeiro, casadinho, morango cravejado e empadinha feitos com muito carinho — do primeiro semestre até a colação de grau.</p>
+        <div class="hero__cta">
+          <a class="btn" href="#cardapio"><i data-i="bag"></i> Montar meu pedido</a>
+          <a class="btn btn--wa" id="heroWa" href="#" target="_blank" rel="noopener"><i data-i="wa"></i> Pedir no WhatsApp</a>
+        </div>
+        <ul class="perks">
+          <li><i data-i="heart"></i> Ingredientes de qualidade</li>
+          <li><i data-i="chef"></i> Feitos com muito carinho</li>
+          <li><i data-i="tooth"></i> Porque sorrisos também se comem!</li>
+        </ul>
+      </div>
+
+      <div class="hero__stage">
+        <div class="doodle doodle--rays" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="carousel" id="carousel" aria-roledescription="carrossel" aria-label="Destaques">
+          <div class="carousel__track" id="carouselTrack"></div>
+          <button class="carousel__nav prev icon-btn" aria-label="Anterior"><i data-i="left"></i></button>
+          <button class="carousel__nav next icon-btn" aria-label="Próximo"><i data-i="right"></i></button>
+          <div class="carousel__dots" id="carouselDots" role="tablist"></div>
+        </div>
+        <svg class="cap-float" viewBox="0 0 24 24" aria-hidden="true"><path d="m2 9 10-5 10 5-10 5L2 9Z"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/><path d="M22 9v5"/></svg>
+      </div>
+    </section>
+
+    <!-- CARDÁPIO -->
+    <section class="section" id="cardapio">
+      <div class="section__head">
+        <h2><span class="script">Nosso cardápio</span> <i data-i="heart"></i></h2>
+        <div class="filters" role="group" aria-label="Filtrar cardápio">
+          <button class="chip" aria-pressed="true" data-cat="all">Tudo</button>
+          <button class="chip" aria-pressed="false" data-cat="doces">Doces</button>
+          <button class="chip" aria-pressed="false" data-cat="salgados">Salgados</button>
+        </div>
+      </div>
+      <div class="grid" id="productGrid" aria-live="polite">
+        <div class="card skeleton"></div><div class="card skeleton"></div><div class="card skeleton"></div>
+      </div>
+    </section>
+
+    <!-- PEDIDO -->
+    <section class="section order-section" id="pedido">
+      <div class="order-wrap">
+        <div class="order-intro">
+          <h2 class="script order-title">Faça já<br />o seu pedido!</h2>
+          <p>Escolha os produtos, diga seu nome e WhatsApp. A gente confirma rapidinho por lá. 💛</p>
+          <ol class="steps">
+            <li><b>1</b> Escolha os doces</li>
+            <li><b>2</b> Informe nome e WhatsApp</li>
+            <li><b>3</b> Receba a confirmação</li>
+          </ol>
+          <svg class="cap-doodle" viewBox="0 0 24 24" aria-hidden="true"><path d="m2 9 10-5 10 5-10 5L2 9Z"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/><path d="M22 9v5"/></svg>
+        </div>
+
+        <form class="order-card" id="orderForm" novalidate>
+          <fieldset class="lines">
+            <legend>Seu pedido</legend>
+            <div id="lines"></div>
+            <button type="button" class="add-line" id="addLine"><i data-i="plus"></i> Adicionar outro produto</button>
+          </fieldset>
+
+          <div class="row2">
+            <label class="field">
+              <span>Seu nome</span>
+              <input class="input" name="name" autocomplete="name" required minlength="2" placeholder="Como podemos te chamar?" />
+            </label>
+            <label class="field">
+              <span>WhatsApp</span>
+              <input class="input" name="phone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="(11) 90000-0000" />
+            </label>
+          </div>
+          <details class="notes">
+            <summary>Adicionar observação (opcional)</summary>
+            <textarea class="textarea" name="notes" maxlength="300" placeholder="Ex.: retirar quinta às 10h no bloco B"></textarea>
+          </details>
+          <p class="err" id="formErr" role="alert"></p>
+
+          <div class="order-total">
+            <span>Total</span>
+            <strong id="orderTotal">R$ 0,00</strong>
+          </div>
+          <button class="btn btn--block btn-submit" id="submitBtn" type="submit"><i data-i="check"></i> Enviar pedido</button>
+          <p class="hint center">Sem cadastro, sem senha. Pagamento combinado na confirmação.</p>
+        </form>
+      </div>
+    </section>
+
+    <!-- NOVIDADES -->
+    <section class="section" id="novidades">
+      <div class="section__head">
+        <h2><span class="script">Novidades fresquinhas</span> <i data-i="news"></i></h2>
+        <a class="btn btn--ghost btn--sm" id="subscribeWa" href="#" target="_blank" rel="noopener"><i data-i="wa"></i> Receber no WhatsApp</a>
+      </div>
+      <div class="news" id="newsList"></div>
+    </section>
+
+    <!-- CARTEIRINHA -->
+    <section class="section" id="carteirinha">
+      <div class="loyalty">
+        <div class="loyalty__copy">
+          <p class="eyebrow">Programa de fidelidade</p>
+          <h2><span class="script">Carteirinha do Formando</span></h2>
+          <p>Cada pedido entregue vale um capelo. Completou a carteirinha? <b id="rewardText">Ganha um brigadeiro</b> — afinal, cada etapa merece ser celebrada.</p>
+          <form class="loyalty__form" id="loyaltyForm">
+            <label class="sr-only" for="loyaltyPhone">Seu WhatsApp</label>
+            <input class="input" id="loyaltyPhone" type="tel" inputmode="tel" placeholder="Seu WhatsApp" required />
+            <button class="btn" type="submit">Consultar</button>
+          </form>
+          <p class="hint" id="loyaltyMsg">Digite o mesmo número usado nos pedidos.</p>
+        </div>
+        <div class="card-id" aria-live="polite">
+          <div class="card-id__head">
+            <img src="assets/img/logo.png" alt="" width="40" height="40" />
+            <div><b>Carteirinha do Formando</b><small>Um Doce Até o Diploma</small></div>
+          </div>
+          <div class="stamps" id="stamps"></div>
+          <div class="card-id__foot"><span id="stampCount">0</span> de <span id="stampGoal">10</span> capelos</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <svg class="blob blob--br" viewBox="0 0 200 200" aria-hidden="true"><path d="M200 200H10c10-40 60-30 80-70S140 50 200 30Z"/></svg>
+    <div class="foot__inner">
+      <div class="brand brand--foot">
+        <img src="assets/img/logo.png" alt="" width="52" height="52" />
+        <span><b>Um Doce</b><small>até o diploma</small></span>
+      </div>
+      <p id="footCity"></p>
+      <div class="foot__links">
+        <a id="footWa" href="#" target="_blank" rel="noopener"><i data-i="wa"></i> WhatsApp</a>
+        <a id="footIg" href="#" target="_blank" rel="noopener">Instagram</a>
+        <a href="admin.html">Área da confeiteira</a>
+      </div>
+      <p class="tiny">Feito com <i data-i="heart"></i> e açúcar.</p>
+    </div>
+  </footer>
+
+  <!-- Barra fixa no celular -->
+  <a class="mbar" id="mbar" href="#pedido" hidden>
+    <span><b id="mbarCount">0 itens</b> · <span id="mbarTotal">R$ 0,00</span></span>
+    <span class="mbar__go">Finalizar <i data-i="right"></i></span>
+  </a>
+
+  <dialog id="doneDialog">
+    <div class="modal done">
+      <div class="done__icon"><i data-i="cap"></i></div>
+      <p class="eyebrow">Pedido recebido</p>
+      <h2 class="script done__title">Obrigada, <span id="doneName"></span>!</h2>
+      <p>Seu código é</p>
+      <p class="done__code" id="doneCode">DD-0000</p>
+      <p class="hint">Vamos confirmar pelo WhatsApp. Se quiser agilizar, mande o resumo agora:</p>
+      <div class="done__actions">
+        <a class="btn btn--wa btn--block" id="doneWa" href="#" target="_blank" rel="noopener"><i data-i="wa"></i> Enviar resumo no WhatsApp</a>
+        <button class="btn btn--ghost btn--block" id="doneClose" type="button">Fechar</button>
+      </div>
+    </div>
+  </dialog>
+  <div class="caps-rain" id="capsRain" aria-hidden="true"></div>
+
+  <script type="module" src="assets/js/shop.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "Um Doce Até o Diploma",
+  "short_name": "Um Doce",
+  "description": "Doces que adoçam sua jornada. Encomende pelo site ou WhatsApp.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7ecdf",
+  "theme_color": "#5b3522",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "assets/img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/img/logo.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
