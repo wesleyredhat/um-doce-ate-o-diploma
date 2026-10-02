@@ -1,7 +1,7 @@
 // Forma de entrega do pedido, a mesma no site, no bot e no painel (place_order confere de novo no banco):
 //   ponto:    lugar fixo com dia marcado (Ajustes → Entrega com dia marcado), a partir de amanhã;
 //   combinar: outro local ou retirada, combinados pelo WhatsApp.
-// settings.delivery_spot = { label: 'Na faculdade, em dia de aula', days: [1, 2, 3, 5] } (0 = domingo … 6 = sábado)
+// settings.delivery_spot = { label: 'Na faculdade', days: [2, 3, 5] } (0 = domingo … 6 = sábado)
 export const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 export const DELIVERY_MAX_DAYS = 14; // o mesmo limite de place_order
 export const COMBINE_LABEL = 'Outro local ou retirada (combinamos pelo WhatsApp)';

@@ -478,8 +478,8 @@ insert into public.settings (key, value) values
   ('store', '{"accepting": true, "notice": "Encomendas com 1 dia de antecedência", "pix_key": "", "bot_greeting": "Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma."}')
 on conflict (key) do nothing;
 
--- Entrega com dia marcado (segunda, terça, quarta e sexta): só preenche se ainda não existe; depois vale o que estiver em Ajustes.
-update public.settings set value = value || '{"delivery_spot": {"label": "Na faculdade, em dia de aula", "days": [1, 2, 3, 5]}}'
+-- Entrega com dia marcado (terça, quarta e sexta): só preenche se ainda não existe; depois vale o que estiver em Ajustes.
+update public.settings set value = value || '{"delivery_spot": {"label": "Na faculdade", "days": [2, 3, 5]}}'
 where key = 'store' and not (value ? 'delivery_spot');
 
 insert into public.settings (key, value) values

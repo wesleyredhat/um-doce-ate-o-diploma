@@ -59,7 +59,7 @@ Bot:     menu → 1 Fazer encomenda · 2 Cardápio · 3 Novidades · 4 Receber n
 Cliente: 1 → número do produto → quantidade → (mais itens | 0 finalizar) → nome (ou 1 = nome do perfil)
 Bot:     resumo + total → 1 Confirmar · 2 Adicionar · 3 Cancelar
 Cliente: 1
-Bot:     Como prefere receber? 1 Na faculdade, em dia de aula (→ próximas 4 datas: seg, ter, qua, sex) · 2 Outro local ou retirada
+Bot:     Como prefere receber? 1 Na faculdade (→ próximas 4 datas: ter, qua, sex) · 2 Outro local ou retirada
 Bot:     resumo com 📍 Entrega → 1 Confirmar
 Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · vou conferir a agenda e confirmo com a chave Pix
 Painel:  Confirmar → Bot: pedido confirmado (itens, total, entrega, chave legível) + (2ª mensagem) só o Pix Copia e Cola com o valor

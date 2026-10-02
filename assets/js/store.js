@@ -98,7 +98,7 @@ function seedDemo() {
     notice: 'Encomendas com 1 dia de antecedência',
     pix_key: '',
     bot_greeting: 'Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma.',
-    delivery_spot: { label: 'Na faculdade, em dia de aula', days: [1, 2, 3, 5] },
+    delivery_spot: { label: 'Na faculdade', days: [2, 3, 5] },
   });
   write('subscribers', []);
   write('coupons', [{ id: uid(), code: 'VOLTA10', kind: 'percent', value: 10, min_order: 0, starts_on: null, ends_on: null, max_uses: 50, active: true, created_at: new Date(now).toISOString() }]);

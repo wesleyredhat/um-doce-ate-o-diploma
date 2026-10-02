@@ -1416,7 +1416,7 @@ function viewSettings(v, signal) {
       </section>
       <section class="panel"><div class="panel__head"><div><h2>Entrega com dia marcado</h2><p>Site e bot perguntam "Como prefere receber?" com esta opção e as próximas datas, a partir de amanhã. A outra opção é combinar pelo WhatsApp.</p></div></div>
         <form class="form" id="df">
-          <label class="field"><span>Texto da opção</span><input class="input" name="label" maxlength="60" value="${esc(s.delivery_spot?.label || '')}" placeholder="Ex.: Na faculdade, em dia de aula" /></label>
+          <label class="field"><span>Texto da opção</span><input class="input" name="label" maxlength="60" value="${esc(s.delivery_spot?.label || '')}" placeholder="Ex.: Na faculdade" /></label>
           <div class="field" role="group" aria-label="Dias da semana"><span>Dias da semana</span><div class="chips" style="flex-wrap:wrap;gap:10px 16px">${WEEKDAYS.map((w, i) => `<label class="switch"><input type="checkbox" name="d${i}" ${s.delivery_spot?.days?.includes(i) ? 'checked' : ''}/><i></i>${w}</label>`).join('')}</div></div>
           <p class="hint">Sem dias marcados (ou sem texto), a pergunta some e todo pedido fica para combinar.</p>
           <div class="form__actions"><button class="btn" type="submit">Salvar entrega</button></div>
