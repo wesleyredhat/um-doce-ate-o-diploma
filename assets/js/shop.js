@@ -537,6 +537,7 @@ function renderStamps(n) {
 let pedidoVisible = false;
 function updateMbar() {
   $('#mbar').hidden = !cart.length || pedidoVisible;
+  document.body.classList.toggle('has-mbar', !$('#mbar').hidden); // avisos sobem para não cobrir a barra (shop.css)
 }
 function wireChrome() {
   const top = $('.top');
