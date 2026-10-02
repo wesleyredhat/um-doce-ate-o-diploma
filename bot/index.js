@@ -18,6 +18,7 @@ import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engin
 import { createCore, PAUSE_TTL_MS } from './core.js';
 import { createSender } from './sender.js';
 import { createNotices } from './notices.js';
+import { createReceipts } from './receipts.js';
 import { createSubscriptions } from './subscriptions.js';
 import { phoneKey } from '../assets/js/coupons.js';
 
@@ -233,6 +234,16 @@ const notices = createNotices({
   wa: { online: () => online, lookup: lookupJid, send: (jid, text) => sendText(jid, text) },
   log,
 });
+// Comprovante do Pix pelo WhatsApp (foto, PDF ou "paguei"): o pedido confirmado vai para a produção. Regras em receipts.js.
+const receipts = createReceipts({
+  db: {
+    recentConfirmations: async (since) => must(await db.from('order_notices')
+      .select('sent_at, order:orders(id, code, customer_name, phone, status, paid)')
+      .eq('kind', 'confirmado').eq('status', 'enviada').gte('sent_at', since).order('sent_at', { ascending: false }).limit(200)) || [],
+    advance: async (id, at) => !!must(await db.from('orders').update({ status: 'producao', receipt_at: at }).eq('id', id).eq('status', 'confirmado').select('id')).length,
+  },
+  log,
+});
 let noticeTick = Promise.resolve(); // o desligamento espera o aviso em andamento
 let noticeWarnAt = 0;
 function sendNotices() {
@@ -326,6 +337,14 @@ async function onMessage(m, type) {
       await sendText(replyTo, `Não consegui identificar seu número 😓 Faça seu pedido pelo site${SITE_URL ? `: ${SITE_URL}` : '.'}`);
     }
     return;
+  }
+  if (!isGroup) {
+    const media = !!(content.imageMessage || content.documentMessage);
+    const reply = await receipts.handle({ phone, media, text }).catch((e) => { console.error('erro ao tratar comprovante', e.message); return null; });
+    if (reply) {
+      await sendText(replyTo, reply);
+      return;
+    }
   }
   const replies = await core.handleIncoming({ phone, text, profileName: m.pushName, isGroup });
   for (const r of replies) await sendText(replyTo, r);

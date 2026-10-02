@@ -64,6 +64,7 @@ Bot:     resumo com 📍 Entrega → 1 Confirmar
 Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · vou conferir a agenda e confirmo com a chave Pix
 Painel:  Confirmar → Bot: pedido confirmado (itens, total, entrega, chave legível) + (2ª mensagem) só o Pix Copia e Cola com o valor
 Painel:  Pronto    → Bot: prontinho; no ponto, o lugar e o dia; senão a observação do pedido ou "vamos combinar"
+Cliente: foto/PDF do comprovante (ou "paguei") → pedido Confirmado vai para Em produção; Bot: "Recebi seu comprovante 🧾"
 Painel:  Entregue  → Bot: obrigada pela preferência + capelos da Carteirinha do Formando (ou "completou!")
 ```
 
@@ -121,7 +122,7 @@ coupons     (id, code, kind[percent|fixed], value, min_order, starts_on, ends_on
 optouts     (phone_key, phone, created_at)              quem pediu para não receber campanhas nem novidades
 campaigns   (id, name, body, coupon_id, audience jsonb, status[enviando|pausada|concluida|cancelada], pause_reason, created_at, finished_at)
 campaign_sends (id, campaign_id, phone, phone_key, name, status[pendente|enviando|enviada|falhou|pulada], error, claimed_at, sent_at)
-orders.paid (pago na hora, só a loja marca) · orders.delivery [ponto|combinar], orders.delivery_date   ← ponto = settings.store.delivery_spot {label, days[0-6]}, de amanhã até 14 dias
+orders.paid (pago na hora, só a loja marca) · orders.receipt_at (comprovante pelo WhatsApp) · orders.delivery [ponto|combinar], orders.delivery_date   ← ponto = settings.store.delivery_spot {label, days[0-6]}, de amanhã até 14 dias
 loyalty_rewards (id, phone_key, order_id, given_at)   ← brindes da carteirinha já entregues; admin_customers traz delivered e rewards_given
 order_notices (id, order_id, kind[confirmado|pronto|entregue], status[pendente|enviando|enviada|falhou|pulada], error, created_at, sent_at)   ← um por pedido e tipo
              orders também guarda coupon_code e discount (total = subtotal − desconto)
