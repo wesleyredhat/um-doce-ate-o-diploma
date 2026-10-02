@@ -18,7 +18,9 @@ const isPaused = (s) => s?.state === 'human';
 // ctx: adaptador de dados do motor (listProducts, placeOrder, ...)
 // sessions: { get(phone) -> { data, updated_at } | null, save(phone, data | null) }
 export function createCore({ ctx, sessions, now = () => Date.now(), log = console.error }) {
-  const age = (row) => now() - new Date(row.updated_at).getTime();
+  // pausa conta da hora da resposta pelo celular (que pode ter chegado atrasada, com o bot fora do ar)
+  const since = (row) => (isPaused(row.data) && row.data.since) || new Date(row.updated_at).getTime();
+  const age = (row) => now() - since(row);
 
   async function loadSession(phone) {
     const row = await sessions.get(phone);
@@ -81,12 +83,12 @@ export function createCore({ ctx, sessions, now = () => Date.now(), log = consol
     }
   }
 
-  // Alguém da loja respondeu pelo celular: o bot sai da conversa com essa pessoa.
+  // Alguém da loja respondeu pelo celular (at = hora da mensagem): o bot sai da conversa com essa pessoa.
   // Devolve true quando gravou a pausa.
-  async function pause(phone) {
+  async function pause(phone, at = now()) {
     const row = await sessions.get(phone);
-    if (isPaused(row?.data) && age(row) < PAUSE_REFRESH_MS) return false;
-    await sessions.save(phone, { state: 'human', cart: [] });
+    if (isPaused(row?.data) && at - since(row) < PAUSE_REFRESH_MS) return false;
+    await sessions.save(phone, { state: 'human', cart: [], since: at });
     return true;
   }
 

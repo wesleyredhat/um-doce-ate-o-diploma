@@ -89,6 +89,17 @@ test('mensagens pessoais ficam sem resposta', async () => {
     'Preciso fazer um pedido no mercado, quer algo?', 'Quero fazer um pedido de pizza hoje', 'queria encomendar as flores do casamento',
     'O menu do almoço de domingo vai ser lasanha', 'Amiga, todo mundo amou o brigadeiro. Quero te ver logo!',
     'Assim que eu receber novidades do médico te aviso', 'Te amo, beijo', 'parar de receber novidades',
+    // segunda revisão: comentário que começa com quantidade, "nenhum", avenida, receita, outras lojas
+    '10 brigadeiros por 50 reais na padaria 😱', '6 empadinhas por 30 reais?? absurdo', '3 brigadeiros e já tô passando mal kkkk',
+    '2 casadinhos sobraram, quer que eu guarde?', '1 brigadeiro e meio já me deixa enjoada', 'Não quero nenhum brigadeiro, tô de dieta 😅',
+    'Preciso de algum brigadeiro pra sobreviver a essa semana', 'Queria tanto um brigadeiro agora', 'Quanto custa um brigadeiro no Starbucks? Vi 12 reais',
+    'Preciso ir na Brigadeiro amanhã cedo, consulta no Hospital Alemão', 'O uber até a Brigadeiro fica quanto?', 'Aluguel na Brigadeiro tá quanto hoje em dia?',
+    'Faria Lima com Brigadeiro, chego em 10 min', 'Preciso de um Uber pra Brigadeiro agora', 'Como faz brigadeiro de colher? O meu sempre empedra',
+    'Tem como fazer brigadeiro sem leite condensado? Minha filha é intolerante', 'Brigadeiro fica quanto tempo fora da geladeira?',
+    'Quero a receita do brigadeiro, por favor!', 'Vou pedir brigadeiro no iFood pra sobremesa', 'Quero fazer um pedido pra sexta no Habib\'s, topa?',
+    'Gostaria de fazer uma encomenda pro dia das crianças na Ri Happy, sabe?', 'Preciso comprar uma caixinha de 4 pilhas pro controle da TV',
+    'Para de me mandar novidades da novela, eu não assisti ainda kkkk', 'Me liga quando sair daqui, quero saber as novidades',
+    'Chega de novidades ruins por hoje 😭', 'Qual o cardápio hoje?', 'Preciso de brigadeiro urgente, dia horrível no trabalho 😭',
   ];
   for (const text of personal) {
     const { say, rows, subs } = setup();
@@ -117,8 +128,18 @@ test('identifica mensagens de encomenda', () => {
     'quero 10 brigadeiros e 2 empadinhas': 'order', '10x brigadeiro': 'order', 'tem como fazer 50 brigadeiros pra sábado?': 'order',
     'quanto custa o brigadeiro?': 'order', 'Brigadeiro custa quanto?': 'order', 'qual o valor do casadinho': 'order',
     'quero uma caixinha de docinhos': 'order', '2 morangos cravejados': 'order', 'uma duzia de casadinhos': 'order',
-    'meia dúzia de brigadeiros': 'order', 'preciso de 50 casadinhos pra sexta': 'order',
-    'oi tudo bem': null, 'comprei 3 caixas de leite': null, 'faz 1 frango assado': null, 'quero uma caixinha': null,
+    'meia dúzia de brigadeiros': 'order', 'preciso de 50 casadinhos pra sexta': 'order', 'quanto é o cento de brigadeiro?': 'order',
+    '10 brigadeiros de pistache pra sábado': 'order', 'manda o cardápio': 'keyword', 'pode me mandar o cardápio?': 'keyword',
+    'oi tudo bem': null, 'comprei 3 caixas de leite': null, 'faz 1 frango assado': null, 'quero uma caixinha de leite': null,
+    'quero uma caixinha': 'order', 'Me vê 2 caixinhas': 'order', 'Quero 20 empadas': 'order',
+    // formas comuns de cliente que a segunda revisão mostrou sem resposta
+    'Vocês têm cardápio?': 'keyword', 'Poderia me enviar o cardápio, por gentileza?': 'keyword', 'Oi! Tem o cardápio com os preços?': 'keyword',
+    'Vc faz encomenda?': 'order', 'Aceita encomenda pra essa semana?': 'order', 'Oi! Vi no Instagram, vocês fazem encomenda?': 'order',
+    'Como faço o pedido?': 'order', 'Ainda dá tempo de encomendar pra sábado?': 'order', 'Quero fazer uma encomenda pro aniversário da minha filha': 'order',
+    'Oi, gostaria de um orçamento para 200 brigadeiros': 'order', 'Bom dia! Vocês fazem casadinho?': 'order', 'Quanto é o cento do brigadeiro?': 'order',
+    'Qto custa o brigadeiro': 'order', 'Quanto você cobra pelo cento de brigadeiro?': 'order', 'Preço?': 'order', 'Brigadeiro quanto?': 'order',
+    'kero 50 brigadeiros': 'order', 'oi qero encomenda': 'order',
+    'Uma amiga do trabalho perguntou se você faz brigadeiro pra fora, passei seu número': null, 'Quero um orçamento da reforma do banheiro': null,
     'cupom VOLTA10': 'coupon', 'Oi, tenho o cupom doce5': 'coupon', 'parar promoções': 'unsubscribe', 'quero receber promoções': 'subscribe',
     'qual cupom tem hoje?': null, 'tem cupom do ifood?': null,
   };
@@ -145,7 +166,7 @@ test('pedido escrito direto, com ponto final', async () => {
   assert.match(r, /10x Brigadeiro/);
   assert.match(r, /2x Empadinha/);
   await say('1'); // usa o nome do perfil
-  await say('sim');
+  await say('1');
   assert.equal(orders.length, 1);
   assert.equal(orders[0].customer_name, 'Ana');
 });
@@ -296,6 +317,33 @@ test('erro ao gravar o pedido avisa o cliente', async () => {
   assert.match((await say('1'))[0], /Ops, algo deu errado/);
 });
 
+test('segunda revisão: nada vira opção do menu, nome ou confirmação por acaso', async () => {
+  const a = setup();
+  await a.say('menu');
+  assert.deepEqual(await a.say('Topo! Umas 4?'), [], '"umas 4" não é a opção 4');
+  assert.equal(a.subs.size, 0);
+  assert.deepEqual(await a.say('chego em 5 min'), [], '"5 min" não é a opção 5');
+  assert.match((await a.say('me manda o menu'))[0], /Fazer encomenda/, 'pedido explícito de menu sempre responde');
+  const b = setup();
+  await b.say('quero 2 brigadeiros');
+  assert.match((await b.say('Que pedido?? kkkk'))[0], /Me diz seu \*nome\*/);
+  await b.say('Ana');
+  assert.match((await b.say('sim'))[0], /Confirmar/, '"sim" solto não confirma');
+  assert.equal(b.orders.length, 0);
+  assert.match((await b.say('1'))[0], /Pedido \*DD-TEST\* recebido/);
+});
+
+test('segunda revisão: leitura dos itens', () => {
+  const read = (t) => parseQuickOrder(t, PRODUCTS).map((x) => `${x.qty}x ${x.product.id}`).join(' ');
+  assert.equal(read('1 caixinha de 4 docinhos'), '1x p3', 'o 4 do nome não é quantidade');
+  assert.equal(read('duas dúzias de casadinho'), '24x p2');
+  assert.equal(read('quero 10 brigadeiros 😋'), '10x p1');
+  assert.equal(read('uma empadinha e 10 brigadeiros'), '1x p5 10x p1');
+  assert.equal(read('10 de brigadeiro e 10 de casadinho'), '10x p1 10x p2');
+  assert.equal(read('Não quero nenhum brigadeiro'), '', '"nenhum" não é "um"');
+  assert.equal(read('Quanto custa um deles?'), '', '"deles" não é Empadinha de Frango');
+});
+
 test('cupom no pedido escrito: desconto no resumo e no pedido', async () => {
   const { say, orders } = setup();
   const [r] = await say('quero 10 brigadeiros cupom volta10');
@@ -406,17 +454,17 @@ test('cupom no meio da escolha não desfaz a etapa', async () => {
   assert.match((await say('2'))[0], /Anotado: 2x Empadinha/);
 });
 
-test('pedido colado e horário não viram cupom', async () => {
+test('pedido colado e horário não viram "cupom não encontrado"', async () => {
   const { say } = setup();
   await say('menu');
   await say('1');
   await say('1');
   await say('10'); // "Quer mais alguma coisa?"
-  const [r] = await say('5casadinhos');
-  assert.match(r, /5x Casadinho/);
-  assert.doesNotMatch(r, /Cupom/);
-  await say('Ana');
-  const [c] = await say('18h30');
+  assert.doesNotMatch((await say('5casadinhos'))[0], /Cupom/);
+  const b = setup();
+  await b.say('quero 10 brigadeiros');
+  await b.say('Ana');
+  const [c] = await b.say('18h30');
   assert.doesNotMatch(c, /Cupom não encontrado/);
   assert.match(c, /Confirmar/);
 });
