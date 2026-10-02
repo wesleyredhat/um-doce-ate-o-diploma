@@ -14,6 +14,7 @@ let gridShown = false;
 let settings = {};
 let cart = loadJSON(CART_KEY, []);
 const coupon = { code: '', result: null }; // result = resposta de checkCoupon
+let couponErr = false; // #formErr está mostrando uma recusa do cupom
 const byId = (id) => products.find((p) => p.id === id);
 
 hydrateIcons();
@@ -215,8 +216,9 @@ function renderLines() {
   if (bc.textContent !== String(count)) { bc.classList.remove('bump'); void bc.offsetWidth; bc.classList.add('bump'); }
   bc.textContent = count;
   $('#mbarCount').textContent = `${count} ${count === 1 ? 'item' : 'itens'}`;
-  if (coupon.code) refreshCoupon(); // o desconto depende do carrinho
-  paintTotals();
+  // O desconto depende do carrinho: até a nova conferência chegar, não mostra o desconto antigo.
+  if (coupon.code) { coupon.result = null; refreshCoupon(); }
+  paintCoupon(); // também atualiza os totais
   updateMbar();
   $('#addLine').hidden = cart.length >= products.length;
 }
@@ -267,7 +269,18 @@ function wireCoupon() {
 function setCoupon(code) {
   coupon.code = normCode(code);
   coupon.result = null;
-  refreshCoupon();
+  paintCoupon();
+  return refreshCoupon();
+}
+
+// Recusa do cupom no envio: abre o campo, explica e põe o foco nele.
+function couponBlocked(text) {
+  $('#couponBox').open = true;
+  $('#formErr').textContent = `${text} Ajuste o pedido ou apague o cupom.`;
+  couponErr = true;
+  const input = $('#couponIn');
+  input.setAttribute('aria-invalid', 'true');
+  input.focus();
 }
 
 let couponSeq = 0;
@@ -291,6 +304,8 @@ function paintCoupon() {
   const msg = $('#couponMsg');
   const r = coupon.result;
   msg.className = 'coupon-msg';
+  if (couponErr) { $('#formErr').textContent = ''; couponErr = false; } // a recusa mostrada no envio já não vale
+  if (!coupon.code || r?.valid) $('#couponIn').removeAttribute('aria-invalid');
   if (!coupon.code) msg.textContent = '';
   else if (!r) msg.textContent = 'Conferindo…';
   else if (r.valid) { msg.textContent = `🎟️ ${r.code} aplicado: ${r.label} de desconto`; msg.classList.add('ok'); }
@@ -332,18 +347,18 @@ function wireForm() {
     if (!cart.length) { err.textContent = 'Escolha pelo menos um produto 🍫'; return; }
     if (form.name.value.trim().length < 2) { form.name.setAttribute('aria-invalid', 'true'); form.name.focus(); err.textContent = 'Informe seu nome.'; return; }
     if (!isValidPhone(form.phone.value)) { form.phone.setAttribute('aria-invalid', 'true'); form.phone.focus(); err.textContent = 'Confira o WhatsApp com DDD.'; return; }
-    if (coupon.code && !coupon.result?.valid) {
-      $('#couponBox').open = true;
-      err.textContent = coupon.result
-        ? `Cupom ${coupon.code}: ${coupon.result.message}. Ajuste o pedido ou apague o cupom.`
-        : 'Ainda estou conferindo o cupom, tente de novo em instantes.';
-      return;
-    }
 
     const btn = $('#submitBtn');
     btn.disabled = true;
     btn.innerHTML = 'Enviando…';
     try {
+      // Cupom digitado sem tocar em Aplicar: confere agora, para o pedido não sair sem o desconto esperado.
+      if (normCode($('#couponIn').value) !== coupon.code) await setCoupon($('#couponIn').value);
+      else if (coupon.code && !coupon.result) await refreshCoupon(); // conferência ainda em andamento
+      if (coupon.code && !coupon.result?.valid) {
+        couponBlocked(coupon.result ? `Cupom ${coupon.code}: ${coupon.result.message}.` : 'Ainda estou conferindo o cupom, tente de novo em instantes.');
+        return;
+      }
       const snapshot = cart.map((l) => ({ ...l, p: byId(l.product_id) }));
       const r = await store.placeOrder({
         customer_name: form.name.value.trim(),
@@ -365,10 +380,10 @@ function wireForm() {
       renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
     } catch (ex) {
       console.error(ex);
-      err.textContent = isCouponError(ex.message)
-        ? `${ex.message}. Ajuste o pedido ou apague o cupom.`
-        : 'Não foi possível enviar agora. Tente de novo ou peça pelo WhatsApp.';
-      if (isCouponError(ex.message)) refreshCoupon();
+      if (isCouponError(ex.message)) {
+        await refreshCoupon(); // atualiza o motivo ao lado do campo antes de mostrar a recusa
+        couponBlocked(`${ex.message}.`);
+      } else err.textContent = 'Não foi possível enviar agora. Tente de novo ou peça pelo WhatsApp.';
     } finally {
       btn.disabled = false;
       btn.innerHTML = `${icon('check')} Enviar pedido`;
