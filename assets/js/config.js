@@ -20,6 +20,9 @@ export const CONFIG = {
   LOYALTY_GOAL: 10,
   LOYALTY_REWARD: '1 brigadeiro de presente',
 
+  // Carrinho do site: esvazia se ficar este tempo sem mexer.
+  CART_EXPIRES_MINUTES: 30,
+
   // Somente modo demo. Em produção o login é feito pelo Supabase Auth.
   DEMO_ADMIN: {
     email: 'admin@doce.com',

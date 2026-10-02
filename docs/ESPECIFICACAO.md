@@ -45,7 +45,7 @@ Decisões:
 3. Na seção **Faça já o seu pedido!**: cada linha tem produto (select) e quantidade (stepper); informa **nome** e **WhatsApp** (máscara automática, validação de DDD). Observação é opcional e fica recolhida.
 4. **Enviar pedido** → `place_order()` recalcula preços no servidor e devolve o código `DD-XXXX`.
 5. Tela de sucesso com chuva de capelos, código do pedido e botão **Enviar resumo no WhatsApp** (mensagem pronta para a loja).
-6. Nome e telefone ficam guardados no aparelho para a próxima compra; o carrinho sobrevive a recarregamento.
+6. Nome e telefone ficam guardados no aparelho para a próxima compra; o carrinho sobrevive a recarregamento e esvazia depois de 30 min sem mexer (`CART_EXPIRES_MINUTES` em `config.js`), com um aviso.
 7. **Cupom** (opcional): campo **Tem cupom de desconto?** ou link com `?cupom=CODIGO`. O desconto e o novo total aparecem antes de enviar (`check_coupon()`), e `place_order()` confere tudo de novo no servidor.
 
 Sem cadastro, sem senha, sem pagamento online: o padrão do mercado para confeitarias pequenas é confirmar e cobrar via Pix no WhatsApp, e cada etapa a mais derruba a conversão.

@@ -12,7 +12,9 @@ const saveJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); }
 let products = [];
 let gridShown = false;
 let settings = {};
-let cart = loadJSON(CART_KEY, []);
+// Guardado como { items, at }; o formato antigo (lista sem data) é descartado.
+let { items: cart = [], at: cartAt = 0 } = loadJSON(CART_KEY, {});
+if (!Array.isArray(cart)) cart = [];
 const coupon = { code: '', result: null }; // result = resposta de checkCoupon
 let couponErr = false; // #formErr está mostrando uma recusa do cupom
 const byId = (id) => products.find((p) => p.id === id);
@@ -28,6 +30,7 @@ async function boot() {
     console.error(e);
     toast('Não consegui carregar o cardápio. Tente recarregar.', 'err');
   }
+  expireCart();
   cart = cart.filter((l) => byId(l.product_id));
 
   if (IS_DEMO) $('#demoRibbon').hidden = false;
@@ -174,12 +177,31 @@ function onAddClick(e) {
 }
 
 /* ---------- carrinho ---------- */
+function saveCart() {
+  cartAt = Date.now();
+  saveJSON(CART_KEY, { items: cart, at: cartAt });
+}
+
+// Carrinho parado além do prazo esvazia: ao abrir a página e ao voltar para uma aba esquecida aberta.
+function expireCart() {
+  if (!cart.length || Date.now() - cartAt <= CONFIG.CART_EXPIRES_MINUTES * 60e3) return false;
+  cart = [];
+  saveCart();
+  toast(`Seu pedido ficou parado mais de ${CONFIG.CART_EXPIRES_MINUTES} min e foi esvaziado. É só escolher de novo ♡`);
+  return true;
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !expireCart()) return;
+  renderLines();
+  renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
+});
+
 function setQty(id, qty, { rerenderGrid = true } = {}) {
   const line = cart.find((l) => l.product_id === id);
   if (qty <= 0) cart = cart.filter((l) => l.product_id !== id);
   else if (line) line.qty = Math.min(500, qty);
   else cart.push({ product_id: id, qty });
-  saveJSON(CART_KEY, cart);
+  saveCart();
   renderLines();
   if (rerenderGrid) renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
 }
@@ -237,7 +259,7 @@ $('#lines').addEventListener('change', (e) => {
   if (e.target.dataset.sel) {
     const i = +e.target.dataset.sel;
     cart[i].product_id = e.target.value;
-    saveJSON(CART_KEY, cart);
+    saveCart();
     renderLines();
     renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
   }
@@ -374,7 +396,7 @@ function wireForm() {
       setCoupon('');
       if (location.search) history.replaceState(null, '', location.pathname + location.hash); // o link com ?cupom= já foi usado
       cart = [];
-      saveJSON(CART_KEY, cart);
+      saveCart();
       form.notes.value = '';
       renderLines();
       renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
