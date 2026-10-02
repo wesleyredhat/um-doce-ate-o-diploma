@@ -112,8 +112,9 @@ const ctx = {
     return data;
   },
   placeOrder: async (o) => {
+    // Sem cupom, a chamada é a mesma de antes do schema novo (pedido funciona mesmo com o banco desatualizado).
     const { data, error } = await db.rpc('place_order', {
-      p_name: o.customer_name, p_phone: o.phone, p_items: o.items, p_channel: o.channel, p_notes: '', p_coupon: o.coupon ?? null,
+      p_name: o.customer_name, p_phone: o.phone, p_items: o.items, p_channel: o.channel, p_notes: '', ...(o.coupon ? { p_coupon: o.coupon } : {}),
     });
     if (error) throw new Error(error.message);
     return data;
@@ -373,4 +374,15 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 await setStatus({ state: 'iniciando', qr: null });
 await start();
 setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);
-setInterval(() => sender.tick().catch((e) => console.error('erro no envio de campanhas', e.message)), CAMPAIGN_TICK_MS);
+// Erro no envio (banco sem as tabelas novas, Supabase fora do ar): tenta de novo em 1 min e avisa no log a cada 10 min.
+let campaignRetryAt = 0;
+let campaignWarnAt = 0;
+setInterval(() => {
+  if (Date.now() < campaignRetryAt) return;
+  sender.tick().catch((e) => {
+    campaignRetryAt = Date.now() + 60e3;
+    if (Date.now() - campaignWarnAt < 10 * 60e3) return;
+    campaignWarnAt = Date.now();
+    console.error(/schema cache|does not exist/.test(e.message) ? `⚠️  Para enviar campanhas, rode o supabase/schema.sql no SQL Editor do Supabase (${e.message})` : `erro no envio de campanhas: ${e.message}`);
+  });
+}, CAMPAIGN_TICK_MS);

@@ -10,7 +10,7 @@ import {
 import { couponState, couponLabel, normCode } from './coupons.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
 
-const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], campaigns: [], campaignCfg: {} };
+const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], couponsError: '', campaigns: [], campaignCfg: {} };
 const VIEWS = {
   inicio: ['Início', viewHome],
   pedidos: ['Pedidos', viewOrders],
@@ -24,6 +24,9 @@ const VIEWS = {
   bot: ['Bot WhatsApp', viewBot],
   ajustes: ['Ajustes', viewSettings],
 };
+// Tabela ou função nova que ainda não existe no Supabase: explica o que fazer em vez da mensagem técnica.
+const dbError = (e) => (/schema cache|does not exist/.test(e?.message || '')
+  ? 'Falta atualizar o banco: rode o supabase/schema.sql no SQL Editor do Supabase.' : e?.message || String(e));
 const NEXT = { novo: 'confirmado', confirmado: 'producao', producao: 'pronto', pronto: 'entregue' };
 const NEXT_LABEL = { novo: 'Confirmar', confirmado: 'Produzir', producao: 'Pronto', pronto: 'Entregue' };
 const st = (id) => STATUSES.find((s) => s.id === id) || STATUSES[0];
@@ -99,7 +102,8 @@ $('#moreBtn').addEventListener('click', () => {
 async function loadAll() {
   const since = new Date(Date.now() - 400 * 864e5).toISOString();
   [S.orders, S.products, S.news, S.settings, S.admins, S.coupons] = await Promise.all([
-    store.listOrders({ since }), store.listProducts({ all: true }), store.listNews({ all: true }), store.getSettings(), store.listBotAdmins(), store.listCoupons(),
+    store.listOrders({ since }), store.listProducts({ all: true }), store.listNews({ all: true }), store.getSettings(), store.listBotAdmins(),
+    store.listCoupons().then((list) => { S.couponsError = ''; return list; }, (e) => { S.couponsError = dbError(e); return []; }),
   ]);
   S.customers = null;
   updateNewPill();
@@ -747,7 +751,7 @@ async function customers() {
 async function viewCustomers(v, signal) {
   if (!S.customers) v.innerHTML = '<p class="hint">Carregando clientes…</p>';
   let all;
-  try { all = await customers(); } catch (e) { v.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  try { all = await customers(); } catch (e) { v.innerHTML = `<p class="err">${esc(dbError(e))}</p>`; return; }
   if (signal.aborted) return;
   const q = CF.q.trim().toLowerCase();
   const digits = q.replace(/\D/g, '');
@@ -803,6 +807,7 @@ function validity(c) {
 
 function viewCoupons(v, signal) {
   v.innerHTML = `
+    ${S.couponsError ? `<p class="err">${esc(S.couponsError)}</p>` : ''}
     <div class="toolbar"><p class="hint" style="margin:0;flex:1">O cupom vale no site e no bot. Cada WhatsApp usa uma vez; pedido cancelado devolve o uso.</p>
       <button class="btn" id="addC">${icon('plus')} Novo cupom</button></div>
     <section class="panel"><div class="table-wrap"><table class="t">
@@ -877,7 +882,7 @@ function couponDialog(c = { code: '', kind: 'percent', value: '', min_order: 0, 
         close();
         render();
         toast('Cupom salvo 🎟️');
-      } catch (ex) { fail(ex.message); }
+      } catch (ex) { fail(dbError(ex)); }
     };
   });
 }
@@ -923,7 +928,7 @@ async function viewCampaigns(v, signal) {
     [S.campaigns, S.campaignCfg] = await Promise.all([store.listCampaigns(), store.getCampaignSettings()]);
   };
   v.innerHTML = '<p class="hint">Carregando campanhas…</p>';
-  try { await load(); } catch (e) { v.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  try { await load(); } catch (e) { v.innerHTML = `<p class="err">${esc(dbError(e))}</p>`; return; }
   if (signal.aborted) return;
   const cfg = { ...PACE, ...S.campaignCfg };
   v.innerHTML = `
@@ -989,7 +994,7 @@ async function viewCampaigns(v, signal) {
 async function campaignDialog() {
   let all;
   let subscribers;
-  try { [all, subscribers] = await Promise.all([customers(), store.listSubscribers()]); } catch (e) { toast(e.message, 'err'); return; }
+  try { [all, subscribers] = await Promise.all([customers(), store.listSubscribers()]); } catch (e) { toast(dbError(e), 'err'); return; }
   const usable = S.coupons.filter((c) => ['ativo', 'agendado'].includes(couponState(c, couponUses(c.code).length)));
   const excluded = new Set();
   openDialog(`<h2>Nova campanha</h2>

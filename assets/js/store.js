@@ -326,9 +326,10 @@ const SupabaseStore = {
   async deleteProduct(id) { must(await sb.from('products').delete().eq('id', id)); },
 
   async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null }) {
-    return must(await sb.rpc('place_order', {
-      p_name: customer_name, p_phone: normalizePhone(phone), p_items: items, p_channel: channel, p_notes: notes, p_coupon: normCode(coupon) || null,
-    }));
+    // Sem cupom, a chamada é a mesma de antes do schema novo: pedido continua funcionando enquanto o banco não é atualizado.
+    const args = { p_name: customer_name, p_phone: normalizePhone(phone), p_items: items, p_channel: channel, p_notes: notes };
+    if (normCode(coupon)) args.p_coupon = normCode(coupon);
+    return must(await sb.rpc('place_order', args));
   },
   async checkCoupon(code, phone = '', items = []) {
     return must(await sb.rpc('check_coupon', { p_code: code, p_phone: phone ? normalizePhone(phone) : '', p_items: items }));
