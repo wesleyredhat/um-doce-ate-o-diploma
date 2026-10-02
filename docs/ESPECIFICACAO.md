@@ -87,7 +87,7 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 
 1. Login (Supabase Auth; sessão expira; só e-mails da tabela `admins` entram).
 2. **Início**: saudação, KPIs do dia contra ontem, faturamento de 14 dias, canais, mais vendidos, pedidos em aberto.
-3. **Pedidos**: quadro Novo → Confirmado → Em produção → Pronto → Entregue (arrastar ou botão de avançar). Busca, filtro por canal, botão de WhatsApp com **mensagem pronta para cada status** (confirmação com Pix, “está no forno”, “prontinho”, agradecimento com contagem da carteirinha). Atualiza a cada 30 s com aviso sonoro e contador na aba do navegador.
+3. **Pedidos**: quadro Novo → Confirmado → Em produção → Pronto → Entregue (arrastar ou botão de avançar). Busca, filtro por canal, botão de WhatsApp com **mensagem pronta para cada status** (confirmação com Pix, “está no forno”, “prontinho”, agradecimento com contagem da carteirinha). Atualiza a cada 30 s, também com a aba em segundo plano, com aviso sonoro e contador na aba do navegador. Enquanto o navegador não libera o som (painel aberto já logado, sem clique), aparece o botão **Ativar som**.
 4. **Produção**: soma de unidades por produto dos pedidos não prontos, com detalhamento por pedido e impressão.
 5. **Novo pedido**: lançamento manual (balcão, telefone, Instagram).
 6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.

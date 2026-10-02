@@ -81,7 +81,9 @@ async function enterApp() {
   S.orders.forEach((o) => S.seen.add(o.id));
   addEventListener('hashchange', route);
   route();
-  if (!BOT_PAGE) setInterval(poll, 30000);
+  if (BOT_PAGE) return;
+  setInterval(poll, 30000);
+  paintSound();
 }
 
 $('#logoutBtn').addEventListener('click', async () => {
@@ -110,8 +112,8 @@ async function loadAll() {
   updateNewPill();
 }
 
+// Roda também com a aba em segundo plano (o navegador espaça para 1 vez por minuto): o aviso não espera a aba voltar.
 async function poll() {
-  if (document.hidden) return;
   try {
     const before = new Set(S.orders.map((o) => o.id));
     S.orders = await store.listOrders({ since: new Date(Date.now() - 400 * 864e5).toISOString() });
@@ -125,9 +127,29 @@ async function poll() {
   } catch (e) { console.warn(e); }
 }
 
+// Um só AudioContext para a página toda. O navegador só libera o som depois de um clique ou toque na página
+// (aberta já logada, começa mudo): até lá aparece o botão "Ativar som", e qualquer clique também libera.
+let audio = null;
+function soundOn() {
+  try { audio ||= new AudioContext(); } catch { return false; }
+  return audio.state === 'running';
+}
+function paintSound() {
+  const btn = $('#soundBtn');
+  if (btn) btn.hidden = soundOn();
+}
+function unlockSound(e) {
+  if (soundOn()) return;
+  // O botão some assim que o som libera, antes do "click": o apito de confirmação toca daqui.
+  const fromBtn = !!e.target.closest?.('#soundBtn');
+  audio?.resume().then(() => { paintSound(); if (fromBtn) chime(); }, () => {});
+}
+if (!BOT_PAGE) for (const evt of ['pointerdown', 'keydown']) addEventListener(evt, unlockSound, true);
+
 function chime() {
+  if (!soundOn()) return paintSound();
   try {
-    const ctx = new AudioContext();
+    const ctx = audio;
     [880, 1320].forEach((f, i) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
