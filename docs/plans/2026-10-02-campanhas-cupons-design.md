@@ -67,7 +67,7 @@ Banco:
 - `orders` ganha `coupon_code text` e `discount numeric(10,2) default 0`. `total` passa a ser o valor final (subtotal menos desconto), então receita, lucro e margem do financeiro continuam certos sem mudança.
 - `place_order(p_name, p_phone, p_items, p_channel, p_notes, p_coupon default null)`: calcula o subtotal, trava a linha do cupom (`select ... for update`) para dois pedidos simultâneos não passarem da cota, valida e grava. A assinatura antiga de 5 parâmetros é removida (`drop function`) para não haver ambiguidade no PostgREST.
 - `check_coupon(p_code, p_phone, p_items)`: mesma validação sem gravar; devolve `{ valid, code, discount, subtotal, total, message }`. Usada pelo site e pelo bot para mostrar o desconto antes de confirmar.
-- `phone_key(text)`: só dígitos, sem o 55 inicial, e sem o 9 quando sobram 11 dígitos.
+- `phone_key(text)`: só dígitos, com o 55 e com o 9 do celular (número antigo sem o 9 ganha o 9; fixo fica como está), a mesma regra de `samePhone` no motor do bot.
 
 Site:
 
@@ -77,7 +77,7 @@ Site:
 
 Bot (motor em `supabase/functions/_shared/bot-engine.js`):
 
-- "cupom VOLTA10" em qualquer mensagem é reconhecido; também conta como intenção explícita, então chama o bot mesmo fora de conversa.
+- "cupom VOLTA10" em qualquer mensagem é reconhecido; também conta como intenção explícita, então chama o bot mesmo fora de conversa. O código precisa ter número ou vir em maiúsculas: "qual cupom tem hoje?" não é cupom.
 - Dentro de uma conversa, uma mensagem que é só um código (ex.: "VOLTA10") também é testada como cupom.
 - O cupom fica na sessão; a confirmação mostra "Desconto VOLTA10: −R$ 4,00" e o total final, recalculado se o carrinho mudar.
 - Se o cupom deixar de valer na hora de gravar, o bot explica o motivo e oferece confirmar sem cupom.
@@ -88,18 +88,18 @@ Painel: área de cupons com lista (código, desconto, vigência, usos "12 de 50"
 
 Tabelas:
 
-- `campaigns`: `name`, `body` (texto com `{nome}`), `coupon_id` (opcional), `audience jsonb` (filtro usado, para registro), `status` (`rascunho`, `enviando`, `pausada`, `concluida`, `cancelada`), `pause_reason`, `created_at`, `started_at`, `finished_at`.
+- `campaigns`: `name`, `body` (texto com `{nome}`), `coupon_id` (opcional), `audience jsonb` (filtro usado, para registro), `status` (`enviando`, `pausada`, `concluida`, `cancelada`; sem rascunho, a campanha nasce na hora do envio), `pause_reason`, `created_at`, `finished_at`.
 - `campaign_sends`: `campaign_id`, `phone`, `phone_key`, `name`, `status` (`pendente`, `enviando`, `enviada`, `falhou`, `pulada`), `error`, `claimed_at`, `sent_at`; único por (`campaign_id`, `phone_key`).
 - `optouts`: `phone_key` (chave), `phone`, `created_at`.
 - `settings` chave `campaigns` (só admin lê): `{ daily_limit: 80, start_hour: 9, end_hour: 20 }`, editável em Ajustes.
 
 Criar campanha (aba **Campanhas**): nome interno, público (filtro, contagem, desmarcar), mensagem com `{nome}`, cupom opcional (acrescenta o código e o link `?cupom=`), prévia no formato do WhatsApp. Rodapé fixo: "_Para não receber mais promoções, responda *parar promoções*._". Ao enviar, o painel grava a campanha e as linhas de `campaign_sends` e mostra a estimativa ("47 mensagens · termina hoje por volta das 16h").
 
-Envio pelo bot (módulo novo `bot/campanhas.js`, sem Baileys nem Supabase, testável como `bot/core.js`):
+Envio pelo bot (módulo novo `bot/sender.js`, sem Baileys nem Supabase, testável como `bot/core.js`; público, texto e ritmo ficam em `assets/js/campaigns.js`, usado também pelo painel):
 
 - Uma mensagem a cada 20 a 60 s (aleatório), só entre `start_hour` e `end_hour` no horário de Brasília, até `daily_limit` por dia somando todas as campanhas. O que sobra continua no dia seguinte.
 - Pega o próximo `pendente` da campanha `enviando` mais antiga, marca `enviando` (claim atômico), confere `optouts` (vira `pulada`), confere se o número tem WhatsApp (`onWhatsApp`; senão `falhou`), envia com `{nome}` trocado pelo primeiro nome e marca `enviada`.
-- 5 falhas seguidas ou WhatsApp desconectado: campanha vai para `pausada` com o motivo.
+- 5 erros de envio seguidos: campanha vai para `pausada` com o motivo. WhatsApp desconectado: a fila só espera, e o painel avisa.
 - Linha em `enviando` há mais de 5 min (bot caiu no meio) volta para `pendente`. No pior caso, uma pessoa recebe a mensagem duas vezes.
 - Quando não sobra `pendente`, a campanha vira `concluida`.
 
@@ -109,7 +109,7 @@ Saída e volta:
 
 - "parar promoções" ou "parar novidades": grava em `optouts` e remove de `subscribers`. Vale para campanhas e novidades. O bot confirma.
 - "receber novidades": remove de `optouts` e inscreve de novo.
-- O envio de Novidades atual também passa a pular quem está em `optouts`.
+- Quem sai também é removido de `subscribers`, então as Novidades deixam de chegar sem mudar o envio delas.
 
 Respostas à campanha seguem as regras atuais de `bot/core.js`: "menu", pedido escrito ou "cupom X" chamam o bot; o resto fica para atendimento humano. A mensagem sugere "Peça pelo link ou responda *menu*".
 
@@ -122,7 +122,8 @@ Testes (`npm test` em `bot/`, relógio falso):
 - Cupom no bot: aplicado, ainda não começou, expirado, esgotado, já usado (com e sem o 9), abaixo do mínimo, pausado, recusado na hora de gravar.
 - `coupons.js`: percentual, valor fixo, teto no subtotal, arredondamento, limites de data no fuso de Brasília.
 - "parar promoções", "parar novidades" e "receber novidades".
-- `campanhas.js`: janela de horário, limite diário, retomada no dia seguinte, pausa após 5 falhas, pular opt-out, devolver `enviando` antigo para a fila, `{nome}`.
+- `assets/js/campaigns.js`: filtros de público, clientes a partir dos pedidos, `{nome}`, texto com cupom e link, estimativa de término.
+- `bot/sender.js`: janela de horário, limite diário, retomada no dia seguinte, pausa após 5 falhas, pular opt-out, devolver `enviando` antigo para a fila.
 - SQL: `supabase/tests/cupons.sql`, roda no SQL Editor dentro de uma transação com `rollback` e confere as regras do cupom direto em `place_order` e `check_coupon`.
 
 Implantação: rodar o SQL novo no Supabase (idempotente), atualizar o bot no Mac (`./instalar-servico-mac.sh`) e fazer push do site. Atualizar README e `docs/ESPECIFICACAO.md`.
