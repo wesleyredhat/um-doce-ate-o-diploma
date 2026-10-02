@@ -2,6 +2,7 @@ import { CONFIG, IS_DEMO } from './config.js';
 import { store, ready } from './store.js';
 import { icon, hydrateIcons } from './icons.js';
 import { $, $$, esc, money, fmtDate, waLink, maskPhoneInput, isValidPhone, toast } from './utils.js';
+import { isCouponError, normCode } from './coupons.js';
 
 const CART_KEY = 'um-doce-ate-o-diploma:cart';
 const ME_KEY = 'um-doce-ate-o-diploma:me';
@@ -12,6 +13,7 @@ let products = [];
 let gridShown = false;
 let settings = {};
 let cart = loadJSON(CART_KEY, []);
+const coupon = { code: '', result: null }; // result = resposta de checkCoupon
 const byId = (id) => products.find((p) => p.id === id);
 
 hydrateIcons();
@@ -34,6 +36,7 @@ async function boot() {
   renderGrid('all');
   renderLines();
   wireForm();
+  wireCoupon();
   wireLoyalty();
   renderNews();
   wireChrome();
@@ -208,12 +211,12 @@ function renderLines() {
     }).join('');
   }
   const count = cartCount();
-  $('#orderTotal').textContent = money(cartTotal());
   const bc = $('#bagCount');
   if (bc.textContent !== String(count)) { bc.classList.remove('bump'); void bc.offsetWidth; bc.classList.add('bump'); }
   bc.textContent = count;
   $('#mbarCount').textContent = `${count} ${count === 1 ? 'item' : 'itens'}`;
-  $('#mbarTotal').textContent = money(cartTotal());
+  if (coupon.code) refreshCoupon(); // o desconto depende do carrinho
+  paintTotals();
   updateMbar();
   $('#addLine').hidden = cart.length >= products.length;
 }
@@ -246,6 +249,68 @@ $('#addLine').addEventListener('click', () => {
   if (next) setQty(next.id, 1);
 });
 
+/* ---------- cupom ---------- */
+function wireCoupon() {
+  const input = $('#couponIn');
+  const fromLink = normCode(new URLSearchParams(location.search).get('cupom'));
+  if (fromLink) {
+    input.value = fromLink;
+    $('#couponBox').open = true;
+    setCoupon(fromLink);
+  }
+  $('#couponApply').addEventListener('click', () => setCoupon(input.value));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); setCoupon(input.value); } });
+  input.addEventListener('input', () => { if (!normCode(input.value) && coupon.code) setCoupon(''); });
+  $('#orderForm').phone.addEventListener('change', () => coupon.code && refreshCoupon()); // "uma vez por WhatsApp"
+}
+
+function setCoupon(code) {
+  coupon.code = normCode(code);
+  coupon.result = null;
+  refreshCoupon();
+}
+
+let couponSeq = 0;
+async function refreshCoupon() {
+  const seq = ++couponSeq;
+  if (!coupon.code) { coupon.result = null; paintCoupon(); return; }
+  const phone = $('#orderForm').phone.value;
+  try {
+    const r = await store.checkCoupon(coupon.code, isValidPhone(phone) ? phone : '', cart.map(({ product_id, qty }) => ({ product_id, qty })));
+    if (seq === couponSeq) coupon.result = r;
+  } catch (e) {
+    console.error(e);
+    if (seq === couponSeq) coupon.result = { valid: false, message: 'Não consegui conferir o cupom agora' };
+  }
+  if (seq === couponSeq) paintCoupon();
+}
+
+const discount = () => (coupon.result?.valid ? Number(coupon.result.discount) : 0);
+
+function paintCoupon() {
+  const msg = $('#couponMsg');
+  const r = coupon.result;
+  msg.className = 'coupon-msg';
+  if (!coupon.code) msg.textContent = '';
+  else if (!r) msg.textContent = 'Conferindo…';
+  else if (r.valid) { msg.textContent = `🎟️ ${r.code} aplicado: ${r.label} de desconto`; msg.classList.add('ok'); }
+  else if (!cart.length && /^Vale para pedidos/.test(r.message)) msg.textContent = `🎟️ ${r.code}: ${r.label} de desconto. ${r.message}.`;
+  else { msg.textContent = `${r.message}.`; msg.classList.add('bad'); }
+  paintTotals();
+}
+
+function paintTotals() {
+  const d = discount();
+  const total = Math.max(0, cartTotal() - d);
+  $('#orderDiscount').hidden = !d;
+  if (d) {
+    $('#discountLabel').textContent = `Cupom ${coupon.result.code}`;
+    $('#discountValue').textContent = `−${money(d)}`;
+  }
+  $('#orderTotal').textContent = money(total);
+  $('#mbarTotal').textContent = money(total);
+}
+
 /* ---------- envio ---------- */
 function wireForm() {
   const form = $('#orderForm');
@@ -267,6 +332,13 @@ function wireForm() {
     if (!cart.length) { err.textContent = 'Escolha pelo menos um produto 🍫'; return; }
     if (form.name.value.trim().length < 2) { form.name.setAttribute('aria-invalid', 'true'); form.name.focus(); err.textContent = 'Informe seu nome.'; return; }
     if (!isValidPhone(form.phone.value)) { form.phone.setAttribute('aria-invalid', 'true'); form.phone.focus(); err.textContent = 'Confira o WhatsApp com DDD.'; return; }
+    if (coupon.code && !coupon.result?.valid) {
+      $('#couponBox').open = true;
+      err.textContent = coupon.result
+        ? `Cupom ${coupon.code}: ${coupon.result.message}. Ajuste o pedido ou apague o cupom.`
+        : 'Ainda estou conferindo o cupom, tente de novo em instantes.';
+      return;
+    }
 
     const btn = $('#submitBtn');
     btn.disabled = true;
@@ -279,9 +351,13 @@ function wireForm() {
         notes: form.notes.value.trim(),
         items: cart.map(({ product_id, qty }) => ({ product_id, qty })),
         channel: 'web',
+        coupon: coupon.code || null,
       });
       saveJSON(ME_KEY, { name: form.name.value.trim(), phone: form.phone.value });
       showDone(r, form.name.value.trim(), snapshot);
+      $('#couponIn').value = '';
+      setCoupon('');
+      if (location.search) history.replaceState(null, '', location.pathname + location.hash); // o link com ?cupom= já foi usado
       cart = [];
       saveJSON(CART_KEY, cart);
       form.notes.value = '';
@@ -289,7 +365,10 @@ function wireForm() {
       renderGrid($('.filters [aria-pressed="true"]').dataset.cat);
     } catch (ex) {
       console.error(ex);
-      err.textContent = 'Não foi possível enviar agora. Tente de novo ou peça pelo WhatsApp.';
+      err.textContent = isCouponError(ex.message)
+        ? `${ex.message}. Ajuste o pedido ou apague o cupom.`
+        : 'Não foi possível enviar agora. Tente de novo ou peça pelo WhatsApp.';
+      if (isCouponError(ex.message)) refreshCoupon();
     } finally {
       btn.disabled = false;
       btn.innerHTML = `${icon('check')} Enviar pedido`;
@@ -300,7 +379,8 @@ function wireForm() {
 function showDone(r, name, lines) {
   $('#doneName').textContent = name.split(' ')[0];
   $('#doneCode').textContent = r.code;
-  const msg = `Oi! Acabei de fazer o pedido *${r.code}* pelo site 🎓\n\n${lines.map((l) => `• ${l.qty}x ${l.p.name}`).join('\n')}\n\nTotal: *${money(r.total)}*\nNome: ${name}`;
+  const off = Number(r.discount) > 0 ? `\nCupom ${r.coupon}: −${money(r.discount)}` : '';
+  const msg = `Oi! Acabei de fazer o pedido *${r.code}* pelo site 🎓\n\n${lines.map((l) => `• ${l.qty}x ${l.p.name}`).join('\n')}${off}\n\nTotal: *${money(r.total)}*\nNome: ${name}`;
   $('#doneWa').href = waLink(msg);
   const dlg = $('#doneDialog');
   dlg.showModal();

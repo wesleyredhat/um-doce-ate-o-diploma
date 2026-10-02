@@ -248,3 +248,9 @@ body::before {
 /* Revelar ao rolar */
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s var(--ease), transform 0.7s var(--ease); }
 .reveal.in { opacity: 1; transform: none; }
+.coupon-row { display: flex; gap: 8px; margin-top: 8px; }
+.coupon-row .input { flex: 1; text-transform: uppercase; }
+.coupon-msg { margin: 6px 0 0; font-size: 0.88rem; font-weight: 700; color: var(--ink-soft); }
+.coupon-msg.ok { color: var(--leaf); }
+.coupon-msg.bad { color: #b44d42; }
+.order-discount { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; color: var(--leaf); }

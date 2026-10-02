@@ -124,8 +124,20 @@
             <summary>Adicionar observação (opcional)</summary>
             <textarea class="textarea" name="notes" maxlength="300" placeholder="Ex.: retirar quinta às 10h"></textarea>
           </details>
+          <details class="notes" id="couponBox">
+            <summary>Tem cupom de desconto?</summary>
+            <div class="coupon-row">
+              <input class="input" name="coupon" id="couponIn" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ex.: VOLTA10" aria-describedby="couponMsg" />
+              <button type="button" class="btn btn--soft btn--sm" id="couponApply">Aplicar</button>
+            </div>
+            <p class="coupon-msg" id="couponMsg" aria-live="polite"></p>
+          </details>
           <p class="err" id="formErr" role="alert"></p>
 
+          <div class="order-discount" id="orderDiscount" hidden>
+            <span id="discountLabel">Desconto</span>
+            <b id="discountValue"></b>
+          </div>
           <div class="order-total">
             <span>Total</span>
             <strong id="orderTotal">R$ 0,00</strong>
