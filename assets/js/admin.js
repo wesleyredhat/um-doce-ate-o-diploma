@@ -1184,8 +1184,7 @@ function viewBot(v, signal) {
       } else if (alive && b.state === 'qr' && qr) {
         botLive.innerHTML = line('honey', 'Aguardando conexão com o WhatsApp')
           + `<img class="bot-qr" src="${qr}" alt="QR Code para conectar o WhatsApp" />
-          <p class="hint">Leia pelo próprio WhatsApp (a câmera comum do celular não conecta): no celular da loja, WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → aponte para o código. Ele se renova sozinho a cada 20 segundos.</p>
-          <p class="hint">Não leu? Aumente o brilho da tela e aproxime o celular. Ou conecte por código: preencha <code>PAIRING_PHONE</code> no <code>bot/.env</code> com o número da loja e reinicie o bot.</p>`;
+          <p class="hint">Leia pelo próprio WhatsApp (a câmera comum do celular não conecta): no celular da loja, WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → aponte para o código. Ele se renova sozinho a cada 20 segundos.</p>`;
       } else if (alive) {
         botLive.innerHTML = line('honey', 'Bot ligado, conectando ao WhatsApp…');
       } else {
