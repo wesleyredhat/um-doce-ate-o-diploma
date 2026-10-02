@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import makeWASocket, { Browsers, DisconnectReason, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
+import makeWASocket, { Browsers, DisconnectReason, fetchLatestWaWebVersion, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import { createClient } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -366,9 +366,17 @@ function onConnection({ connection, lastDisconnect, qr }) {
   }
 }
 
+// A versão do WhatsApp Web embutida no Baileys envelhece, e com versão velha o celular recusa o aparelho
+// ("não foi possível conectar"). Busca a atual a cada conexão; sem internet para isso, fica a embutida.
+let waVersion = '';
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  sock = makeWASocket({ auth: state, logger: pino({ level: 'error' }), browser: Browsers.macOS('Um Doce Bot'), markOnlineOnConnect: false });
+  const { version, error } = await fetchLatestWaWebVersion({ signal: AbortSignal.timeout(10e3) });
+  if (version.join('.') !== waVersion) {
+    waVersion = version.join('.');
+    log(`WhatsApp Web ${waVersion}${error ? ' (a embutida: não consegui buscar a atual)' : ''}`);
+  }
+  sock = makeWASocket({ version, auth: state, logger: pino({ level: 'error' }), browser: Browsers.macOS('Um Doce Bot'), markOnlineOnConnect: false });
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', onConnection);
   // Uma mensagem por vez: duas mensagens seguidas do mesmo cliente não disputam a mesma etapa da conversa.
