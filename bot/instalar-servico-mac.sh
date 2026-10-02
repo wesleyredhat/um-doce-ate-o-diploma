@@ -2,7 +2,8 @@
 # Deixa o bot rodando em segundo plano no Mac: liga junto com o login e reinicia se cair.
 #   ./instalar-servico-mac.sh            instala/atualiza
 #   ./instalar-servico-mac.sh remover    desinstala
-# Antes, rode "npm start" uma vez e escaneie o QR Code (a sessão fica em ./auth).
+# Antes: npm install e a Secret key do Supabase no arquivo .env.
+# Se o WhatsApp ainda não estiver conectado, o QR Code aparece no painel (aba Bot WhatsApp) e em bot.log.
 set -euo pipefail
 
 LABEL=com.umdoce.bot
@@ -19,8 +20,9 @@ fi
 
 NODE="$(command -v node || true)"
 [ -n "$NODE" ] || { echo "Node.js não encontrado. Instale em https://nodejs.org"; exit 1; }
+[ -d "$DIR/node_modules" ] || { echo "Rode 'npm install' na pasta bot antes."; exit 1; }
 [ -f "$DIR/.env" ] || { echo "Falta o arquivo bot/.env (copie de .env.example e preencha)."; exit 1; }
-[ -d "$DIR/auth" ] || { echo "Rode 'npm start' uma vez e escaneie o QR Code antes de instalar o serviço."; exit 1; }
+grep -Eq '^SUPABASE_SECRET_KEY=.+' "$DIR/.env" || { echo "Cole a Secret key do Supabase em SUPABASE_SECRET_KEY no arquivo bot/.env."; exit 1; }
 
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF
@@ -46,4 +48,4 @@ EOF
 
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "✅ Bot instalado. Ele liga sozinho no login e reinicia se cair."
-echo "   Ver o log:  tail -f \"$DIR/bot.log\""
+echo "   Para conectar o WhatsApp: painel → Bot WhatsApp (QR Code), ou veja o QR em: tail -f \"$DIR/bot.log\""

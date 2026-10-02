@@ -406,7 +406,7 @@ function orderDialog() {
     maskPhoneInput(f.phone);
     const draw = () => {
       $('#mlines', m).innerHTML = lines.map((l, i) => `<div class="mline">
-        <select class="select" data-ls="${i}">${active.map((p) => `<option value="${p.id}" ${p.id === l.product_id ? 'selected' : ''}>${esc(p.name)} — ${money(p.price)}</option>`).join('')}</select>
+        <select class="select" data-ls="${i}">${active.map((p) => `<option value="${p.id}" ${p.id === l.product_id ? 'selected' : ''}>${esc(p.name)} (${money(p.price)})</option>`).join('')}</select>
         <input class="input" type="number" min="1" value="${l.qty}" data-lq="${i}" style="width:84px" aria-label="Quantidade" />
         <button type="button" class="icon-btn" data-lr="${i}" aria-label="Remover">${icon('trash')}</button></div>`).join('');
       $('#mtotal', m).textContent = money(lines.reduce((s, l) => s + l.qty * (prodById(l.product_id)?.price || 0), 0));
@@ -538,7 +538,7 @@ function productDialog(p = { name: '', category: 'doces', description: '', price
       const price = +f.price.value || 0;
       const cost = +f.cost.value || 0;
       const mg = margin(price, cost);
-      $('#pprev', m).innerHTML = `<div><small>Lucro / un</small><b>${money(price - cost)}</b></div><div><small>Margem</small><b class="marg marg--${marginClass(mg)}">${pct(mg)}</b></div><div><small>Markup</small><b>${cost ? (price / cost).toFixed(2).replace('.', ',') + 'x' : '—'}</b></div>`;
+      $('#pprev', m).innerHTML = `<div><small>Lucro / un</small><b>${money(price - cost)}</b></div><div><small>Margem</small><b class="marg marg--${marginClass(mg)}">${pct(mg)}</b></div><div><small>Markup</small><b>${cost ? (price / cost).toFixed(2).replace('.', ',') + 'x' : 'sem custo'}</b></div>`;
       const sug = cost ? Math.ceil((cost / (1 - 0.6)) * 2) / 2 : 0;
       $('#psug', m).innerHTML = cost ? `💡 Para 60% de margem, o preço sugerido é <b>${money(sug)}</b>. <button type="button" class="chip" id="usesug">Usar</button>` : '';
       $('#usesug', m)?.addEventListener('click', () => { f.price.value = sug.toFixed(2); prev(); });
@@ -757,14 +757,7 @@ function viewBot(v, signal) {
         <section class="panel"><div class="panel__head"><h2>Status da integração</h2></div>
           ${live ? `<p class="status-line"><span class="dot" style="background:var(--leaf)"></span>Bot conectado ao WhatsApp Business (Cloud API)</p>
           <p class="hint">Webhook: <span class="codeline">${esc(CONFIG.BOT_FUNCTION_URL)}</span></p>` : `
-          <p class="status-line" id="botLive"><span class="dot" style="background:var(--honey)"></span>Verificando o bot…</p>
-          <ol class="steps-list">
-            <li>No computador que vai ficar ligado, entre na pasta <code>bot</code> e rode <code>npm install</code> (só na primeira vez).</li>
-            <li>Copie <code>.env.example</code> para <code>.env</code> e cole a <b>Secret key</b> do Supabase.</li>
-            <li>Rode <code>npm start</code>: aparece um QR Code no terminal.</li>
-            <li>No celular da loja: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → escaneie.</li>
-            <li>Deixe o terminal aberto. Novidades marcadas com WhatsApp saem em até 1 minuto.</li>
-          </ol>`}
+          <div id="botLive"><p class="status-line"><span class="dot" style="background:var(--honey)"></span>Verificando o bot…</p></div>`}
         </section>
         <section class="panel"><div class="panel__head"><div><h2>Números autorizados</h2><p>Quem pode postar novidades e ver pedidos pelo bot</p></div><button class="btn btn--sm" id="addAdm">${icon('plus')} Adicionar</button></div>
           <div class="table-wrap"><table class="t" style="min-width:440px"><thead><tr><th>Nome</th><th>WhatsApp</th><th>Postar novidades</th><th>Ver pedidos</th><th></th></tr></thead>
@@ -775,15 +768,16 @@ function viewBot(v, signal) {
         </section>
         <section class="panel"><div class="panel__head"><h2>Como as pessoas usam</h2></div>
           <ul class="steps-list">
-            <li><b>Clientes</b> mandam “oi” e seguem o menu, ou escrevem direto: <code>quero 10 brigadeiros e 2 empadinhas</code>.</li>
-            <li><b>No grupo</b>, o bot só responde a mensagens com <code>#pedido</code> — ex.: <code>#pedido 6 casadinhos</code> — e continua no privado.</li>
+            <li><b>Clientes</b>: o bot responde só mensagens de encomenda: <code>menu</code>, <code>cardápio</code>, os botões do site ou o pedido escrito, como <code>quero 10 brigadeiros e 2 empadinhas</code>. Conversas pessoais ficam sem resposta automática.</li>
+            <li><b>Respondeu pelo celular?</b> O bot fica 12 h sem falar com aquela pessoa (ela pode chamar de novo com <code>menu</code>). Conversa parada há 30 min encerra sozinha.</li>
+            <li><b>No grupo</b>, o bot só responde a mensagens com <code>#pedido</code> (ex.: <code>#pedido 6 casadinhos</code>) e continua no privado.</li>
             <li><b>Administradoras</b>: <code>#novidade Título | texto</code>, <code>#pedidos</code>, <code>#producao</code>.</li>
             <li>Opção <b>4</b> inscreve o cliente para receber novidades; “parar novidades” cancela.</li>
           </ul>
         </section>
       </div>
 
-      <section class="panel" style="align-self:start"><div class="panel__head"><div><h2>Simulador</h2><p>Mesma lógica do bot real. Pedidos feitos aqui entram no quadro.</p></div></div>
+      <section class="panel" style="align-self:start"><div class="panel__head"><div><h2>Simulador</h2><p>Mesma conversa do bot real (aqui ele responde tudo). Pedidos feitos aqui entram no quadro.</p></div></div>
         <div class="phone-sim"><div class="phone-sim__screen">
           <div class="phone-sim__head"><img src="assets/img/logo.png" width="34" height="34" alt="" /><div><b>Um Doce Até o Diploma</b><small>bot · online</small></div>
             <select id="persona" aria-label="Conversar como">${Object.entries(personas).map(([k, p]) => `<option value="${k}" ${SIM.persona === k ? 'selected' : ''}>${p.name}</option>`).join('')}</select></div>
@@ -795,14 +789,31 @@ function viewBot(v, signal) {
       </section>
     </div>`;
 
-  // O bot por QR Code grava um "sinal de vida" a cada 30 s em settings.bot.
+  // O bot por QR Code (pasta bot/) grava o status a cada 30 s em settings.bot, inclusive o QR Code para conectar.
   const botLive = $('#botLive', v);
-  if (botLive) store.botStatus().then((b) => {
-    const on = b?.last_seen && Date.now() - new Date(b.last_seen).getTime() < 120e3;
-    botLive.innerHTML = `<span class="dot" style="background:${on ? 'var(--leaf)' : 'var(--honey)'}"></span>${
-      on ? `Bot online no WhatsApp${b.phone ? ` (${formatPhone(b.phone)})` : ''}`
-        : b?.last_seen ? `Bot desligado — visto pela última vez ${timeAgo(b.last_seen)}` : 'Bot ainda não conectado — o simulador ao lado já funciona'}`;
-  }).catch(() => {});
+  if (botLive) {
+    const line = (color, text) => `<p class="status-line"><span class="dot" style="background:var(--${color})"></span>${text}</p>`;
+    const paint = (b) => {
+      const alive = b?.last_seen && Date.now() - new Date(b.last_seen).getTime() < 120e3 && b.state !== 'desligado';
+      const qr = typeof b?.qr === 'string' && b.qr.startsWith('data:image/png;base64,') ? b.qr : '';
+      if (alive && b.state === 'online') {
+        botLive.innerHTML = line('leaf', `Bot online no WhatsApp${b.phone ? ` · ${esc(formatPhone(b.phone))}` : ''}`);
+      } else if (alive && b.state === 'qr' && qr) {
+        botLive.innerHTML = line('honey', 'Aguardando conexão com o WhatsApp')
+          + `<img class="bot-qr" src="${qr}" alt="QR Code para conectar o WhatsApp" width="240" height="240" />
+          <p class="hint">No celular da loja: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> → aponte para o código. Ele se renova sozinho.</p>`;
+      } else if (alive) {
+        botLive.innerHTML = line('honey', 'Bot ligado, conectando ao WhatsApp…');
+      } else {
+        botLive.innerHTML = line('honey', b?.last_seen ? `Bot desligado, visto ${timeAgo(b.last_seen)}. Confira se o computador do bot está ligado.` : 'Bot ainda não instalado. O simulador ao lado já funciona')
+          + `<p class="hint">O bot roda num computador sempre ligado: pasta <code>bot</code> do projeto, <code>npm install</code>, Secret key do Supabase no <code>.env</code> e <code>./instalar-servico-mac.sh</code>. O QR Code para conectar aparece aqui.</p>`;
+      }
+    };
+    const refresh = () => store.botStatus().then(paint).catch(() => {});
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    signal.addEventListener('abort', () => clearInterval(timer));
+  }
 
   const msgs = $('#msgs', v);
   const draw = () => {
@@ -817,7 +828,7 @@ function viewBot(v, signal) {
     draw();
     try {
       const replies = await handleMessage({ phone: p.phone, text, profileName: p.name.split(' ')[0], isGroup: p.isGroup }, botCtx());
-      if (!replies.length) SIM.log.push({ dir: 'sys', text: p.isGroup ? 'bot ignorou (no grupo só responde a #pedido)' : 'atendimento humano — bot em silêncio' });
+      if (!replies.length) SIM.log.push({ dir: 'sys', text: p.isGroup ? 'bot ignorou (no grupo só responde a #pedido)' : 'atendimento humano, bot em silêncio' });
       for (const r of replies) { await new Promise((ok) => setTimeout(ok, 350)); SIM.log.push({ dir: 'in', text: r }); draw(); }
       draw();
       const before = S.orders.length;
@@ -876,7 +887,7 @@ function viewSettings(v, signal) {
         </form>
       </section>
       <section class="panel"><div class="panel__head"><h2>Conta e segurança</h2></div>
-        <p class="status-line"><span class="dot" style="background:${IS_DEMO ? 'var(--honey)' : 'var(--leaf)'}"></span>${IS_DEMO ? 'Modo demonstração (dados apenas neste navegador)' : 'Produção — Supabase Auth + RLS'}</p>
+        <p class="status-line"><span class="dot" style="background:${IS_DEMO ? 'var(--honey)' : 'var(--leaf)'}"></span>${IS_DEMO ? 'Modo demonstração (dados apenas neste navegador)' : 'Produção (Supabase Auth + RLS)'}</p>
         <p class="hint">${IS_DEMO
           ? 'Para receber pedidos reais de clientes, conecte o Supabase (gratuito) preenchendo SUPABASE_URL e SUPABASE_ANON_KEY em assets/js/config.js. O passo a passo está no README.'
           : `Logada como <b>${esc(S.user?.email || '')}</b>. Senhas e novos acessos são gerenciados em Supabase → Authentication.`}</p>

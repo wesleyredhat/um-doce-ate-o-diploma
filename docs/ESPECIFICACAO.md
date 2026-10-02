@@ -1,6 +1,6 @@
-# Especificação técnica e de design — Um Doce Até o Diploma
+# Um Doce Até o Diploma: especificação técnica e de design
 
-Sistema de encomendas para um pequeno negócio de doces e salgados que vende principalmente para estudantes (identidade visual: formatura + odontologia — “porque sorrisos também se comem”).
+Sistema de encomendas para um pequeno negócio de doces e salgados que vende principalmente para estudantes (identidade visual: formatura + odontologia, “porque sorrisos também se comem”).
 
 Objetivo: **receber pedidos com o mínimo de atrito** (site e WhatsApp), **organizar a produção** e **mostrar se o negócio dá lucro**, com custo de infraestrutura zero no início.
 
@@ -39,7 +39,7 @@ Decisões:
 ### 2.1 Pedido pelo site (meta: menos de 60 s)
 
 1. Cliente chega pelo link (Instagram, grupo, QR code no balcão) → vê o hero com carrossel dos destaques.
-2. Toca em **Adicionar** no cardápio ou em **Quero** no carrossel → o item aparece no pedido; no celular surge a barra fixa “N itens · R$ X — Finalizar”.
+2. Toca em **Adicionar** no cardápio ou em **Quero** no carrossel → o item aparece no pedido; no celular surge a barra fixa “N itens · R$ X · Finalizar”.
 3. Na seção **Faça já o seu pedido!**: cada linha tem produto (select) e quantidade (stepper); informa **nome** e **WhatsApp** (máscara automática, validação de DDD). Observação é opcional e fica recolhida.
 4. **Enviar pedido** → `place_order()` recalcula preços no servidor e devolve o código `DD-XXXX`.
 5. Tela de sucesso com chuva de capelos, código do pedido e botão **Enviar resumo no WhatsApp** (mensagem pronta para a loja).
@@ -103,7 +103,7 @@ bot_sessions(phone, data jsonb, updated_at)
 
 - **Snapshot de preço e custo no item**: mudar o preço amanhã não altera o lucro de ontem.
 - **Telefone normalizado** `55DDDNÚMERO` em todo lugar (pedidos, bot, fidelidade, links `wa.me`).
-- **Segurança (RLS)**: público lê produtos ativos, novidades publicadas e `settings.store`; cria pedido apenas via `place_order()` (valida canal, quantidade 1–500, até 20 itens, produto ativo, loja aberta); `loyalty_stamps()` devolve só um número. Todo o resto exige `is_admin()`. `bot_sessions` só é acessível pela service role da Edge Function.
+- **Segurança (RLS)**: público lê produtos ativos, novidades publicadas e `settings.store`; cria pedido apenas via `place_order()` (valida canal, quantidade de 1 a 500, até 20 itens, produto ativo, loja aberta); `loyalty_stamps()` devolve só um número. Todo o resto exige `is_admin()`. `bot_sessions` só é acessível pela service role da Edge Function.
 
 ## 4. Interface
 
@@ -162,7 +162,7 @@ Ferramentas: períodos de 7/30/90 dias e 12 meses (barras semanais) · exportaç
 | Banco/Auth | Supabase Free | Supabase Pro (backups diários, sem pausa por inatividade) |
 | Bot | WhatsApp Cloud API oficial + Edge Function | BSPs (Z-API, Twilio, 360dialog) se precisar de grupos ou inbox compartilhada |
 | Imagens | redimensionadas no navegador (máx. 900 px, JPEG 82%) e salvas no registro | Supabase Storage + CDN |
-| Gráficos | SVG próprio (≈ 3 KB) | — |
+| Gráficos | SVG próprio (≈ 3 KB) | não precisa |
 
 Custos: hospedagem e banco R$ 0. WhatsApp Cloud API cobra por conversa iniciada pela empresa (templates de marketing); respostas dentro da janela de 24h após mensagem do cliente não são cobradas.
 

@@ -116,7 +116,7 @@ function renderGrid(cat) {
   const list = cat === 'all' ? products : products.filter((p) => p.category === cat);
   const grid = $('#productGrid');
   if (!list.length) {
-    grid.innerHTML = '<p class="news-empty">Nada por aqui ainda — volte logo!</p>';
+    grid.innerHTML = '<p class="news-empty">Nada por aqui ainda. Volte logo!</p>';
     return;
   }
   grid.innerHTML = list.map((p) => {
@@ -190,7 +190,7 @@ function renderLines() {
   } else {
     box.innerHTML = cart.map((l, i) => {
       const p = byId(l.product_id);
-      const options = products.map((o) => `<option value="${o.id}" ${o.id === p.id ? 'selected' : ''} ${o.id !== p.id && cart.some((c) => c.product_id === o.id) ? 'disabled' : ''}>${esc(o.name)} — ${money(o.price)}</option>`).join('');
+      const options = products.map((o) => `<option value="${o.id}" ${o.id === p.id ? 'selected' : ''} ${o.id !== p.id && cart.some((c) => c.product_id === o.id) ? 'disabled' : ''}>${esc(o.name)} (${money(o.price)})</option>`).join('');
       return `
       <div class="line" data-i="${i}">
         <img src="${esc(p.image)}" alt="" />
@@ -364,7 +364,7 @@ function wireLoyalty() {
       const now = total % goal;
       renderStamps(now);
       $('#loyaltyMsg').innerHTML = total === 0
-        ? 'Ainda sem capelos — que tal começar hoje? 🎓'
+        ? 'Ainda sem capelos. Que tal começar hoje? 🎓'
         : `${prizes ? `Você já completou <b>${prizes}</b> carteirinha(s)! ` : ''}Faltam <b>${goal - now}</b> pedido(s) para ${esc(CONFIG.LOYALTY_REWARD)}.`;
     } catch {
       $('#loyaltyMsg').textContent = 'Não consegui consultar agora.';

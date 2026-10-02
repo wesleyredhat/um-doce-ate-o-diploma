@@ -230,3 +230,4 @@ table.t { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width:
   .main { padding: 0; }
   .panel, .prod-item { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
 }
+.bot-qr { display: block; width: 240px; max-width: 100%; height: auto; margin: 12px auto 4px; padding: 10px; background: #fff; border-radius: 14px; image-rendering: pixelated; }

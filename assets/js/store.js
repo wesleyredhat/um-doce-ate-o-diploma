@@ -81,7 +81,7 @@ function seedDemo() {
   }
   orders.sort((a, b) => b.created_at.localeCompare(a.created_at));
   const news = [
-    { id: uid(), title: 'Chegou o Morango Cravejado 🍓', body: 'Morango fresquinho, chocolate branco e pedacinhos de morango por fora. Edição de lançamento — garanta o seu antes da prova!',
+    { id: uid(), title: 'Chegou o Morango Cravejado 🍓', body: 'Morango fresquinho, chocolate branco e pedacinhos de morango por fora. Edição de lançamento: garanta o seu antes da prova!',
       image: 'assets/img/morango-cravejado.jpg', channels: ['site', 'whatsapp'], published: true, author: 'Cris', created_at: new Date(now - 2 * 864e5).toISOString() },
     { id: uid(), title: 'Kit Semana de Provas', body: 'Caixinha com 4 docinhos + 1 empadinha por um preço especial. Porque ninguém estuda de estômago vazio.',
       image: 'assets/img/brigadeiro-casadinho.jpg', channels: ['site'], published: true, author: 'Cris', created_at: new Date(now - 6 * 864e5).toISOString() },
@@ -92,7 +92,7 @@ function seedDemo() {
   write('bot_admins', [{ id: uid(), phone: '5511999999999', name: 'Cris (dona)', can_post: true, can_manage_orders: true }]);
   write('settings', {
     accepting: true,
-    notice: 'Encomendas com 1 dia de antecedência • Retirada no campus',
+    notice: 'Encomendas com 1 dia de antecedência',
     pix_key: '',
     bot_greeting: 'Oi! 🎓🍫 Aqui é a Um Doce Até o Diploma.',
   });
@@ -112,7 +112,7 @@ const DemoStore = {
   mode: 'demo',
   async init() { seedDemo(); },
 
-  // Auth local — apenas para demonstração (não é segurança real, os dados estão no próprio navegador).
+  // Auth local, apenas para demonstração (não é segurança real, os dados estão no próprio navegador).
   async signIn(email, password) {
     const ok = email.trim().toLowerCase() === CONFIG.DEMO_ADMIN.email && (await sha256(password)) === CONFIG.DEMO_ADMIN.passwordHash;
     if (!ok) throw new Error('E-mail ou senha inválidos');

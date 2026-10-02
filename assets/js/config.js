@@ -1,13 +1,13 @@
 // Configuração da loja.
 // Sem SUPABASE_URL/SUPABASE_ANON_KEY o sistema roda em MODO DEMO:
-// dados ficam apenas no navegador (localStorage) — ótimo para testar, não para vender.
+// dados ficam apenas no navegador (localStorage): ótimo para testar, não para vender.
 // Preencha os dois campos abaixo para ativar o modo produção (pedidos reais + login seguro).
 export const CONFIG = {
   STORE_NAME: 'Um Doce Até o Diploma',
   TAGLINE: 'Doces que adoçam sua jornada',
   WHATSAPP_NUMBER: '5511941776869', // DDI + DDD + número, só dígitos
   INSTAGRAM: 'umdoceateodiploma',
-  CITY: 'Entregas no campus e região',
+  CITY: 'Entrega ou retirada combinada pelo WhatsApp',
 
   SUPABASE_URL: 'https://vaktmlovqpaxbfhccxcq.supabase.co',
   SUPABASE_ANON_KEY: 'sb_publishable_BNJm0LJf5j-V-1stW3E7fw_cgE-ALpU',

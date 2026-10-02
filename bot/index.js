@@ -2,14 +2,18 @@
 // como o WhatsApp Web. Usa o mesmo motor de conversa do simulador do painel.
 //
 //   cp .env.example .env    (preencha a chave secreta do Supabase)
-//   npm install && npm start
+//   npm install && npm start      (ou ./instalar-servico-mac.sh para ficar sempre ligado)
 //
-// A sessão fica em ./auth — não apague, senão terá de escanear o QR de novo.
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, isJidGroup, isLidUser, jidNormalizedUser } from 'baileys';
+// O QR Code aparece no terminal e no painel (aba Bot WhatsApp). Quando o bot responde
+// e quando fica quieto está em core.js. A sessão do WhatsApp fica em ./auth.
+import { rmSync } from 'node:fs';
+import makeWASocket, { Browsers, DisconnectReason, isJidGroup, isLidUser, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import { createClient } from '@supabase/supabase-js';
-import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
+import qrcodeTerminal from 'qrcode-terminal';
 import pino from 'pino';
-import { handleMessage } from '../supabase/functions/_shared/bot-engine.js';
+import { detectIntent, samePhone } from '../supabase/functions/_shared/bot-engine.js';
+import { createCore } from './core.js';
 
 const env = (k, d = '') => process.env[k] ?? d;
 for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) {
@@ -18,23 +22,53 @@ for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) {
 const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SECRET_KEY'), { auth: { persistSession: false } });
 const SITE_URL = env('SITE_URL');
 const OWNER_PHONE = env('OWNER_PHONE').replace(/\D/g, '');
-const NEWS_POLL_MS = 30_000;
+const AUTH_DIR = new URL('./auth', import.meta.url).pathname;
+const TICK_MS = 30_000;
+const CATCH_UP_MS = 15 * 60e3; // ao voltar do ar, responde o que chegou nos últimos 15 min
+const PAUSE_WRITE_MS = 10 * 60e3; // grava a pausa no máximo a cada 10 min por conversa
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const digits = (jid) => (jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
 const toJid = (phone) => `${phone}@s.whatsapp.net`;
+const log = (...a) => console.log(new Date().toLocaleString('pt-BR'), ...a);
 
 let sock;
 let online = false;
+let attempt = 0;
+const sentIds = new Set(); // mensagens do próprio bot: não contam como "alguém respondeu pelo celular"
+const pausedAt = new Map();
+let queue = Promise.resolve();
 
 async function sendText(jid, text) {
   try {
-    await sock.sendMessage(jid, { text });
+    const m = await sock.sendMessage(jid, { text });
+    if (m?.key?.id) {
+      sentIds.add(m.key.id);
+      if (sentIds.size > 1000) sentIds.delete(sentIds.values().next().value);
+    }
     return true;
   } catch (e) {
     console.error('falha ao enviar', jid, e.message);
     return false;
   }
+}
+
+// Status lido pela aba "Bot WhatsApp" do painel: online, QR Code para conectar, última vez visto.
+let status = {};
+async function setStatus(patch = {}) {
+  status = { ...status, ...patch, last_seen: new Date().toISOString() };
+  const { error } = await db.from('settings').upsert({ key: 'bot', value: status });
+  if (error) console.error('erro ao gravar status do bot', error.message);
+}
+
+let products = { at: 0, list: [] };
+async function listProducts() {
+  if (Date.now() - products.at > 60e3) {
+    const { data, error } = await db.from('products').select('*').eq('active', true).order('sort');
+    if (error) throw new Error(error.message);
+    products = { at: Date.now(), list: data ?? [] };
+  }
+  return products.list;
 }
 
 // Envio em massa com pausa aleatória: o WhatsApp comum bloqueia números que disparam rápido demais.
@@ -46,19 +80,14 @@ async function broadcast(news) {
     if (await sendText(toJid(s.phone), text)) sent++;
     await sleep(4000 + Math.random() * 4000);
   }
-  console.log(`novidade "${news.title}" enviada para ${sent} cliente(s)`);
-  return { sent };
+  log(`novidade "${news.title}" enviada para ${sent} cliente(s)`);
 }
 
 const ctx = {
-  listProducts: async () => (await db.from('products').select('*').eq('active', true).order('sort')).data ?? [],
+  listProducts,
   getSettings: async () => (await db.from('settings').select('value').eq('key', 'store').maybeSingle()).data?.value ?? {},
-  getSession: async (phone) => (await db.from('bot_sessions').select('data').eq('phone', phone).maybeSingle()).data?.data ?? null,
-  saveSession: async (phone, data) => {
-    if (data) await db.from('bot_sessions').upsert({ phone, data, updated_at: new Date().toISOString() });
-    else await db.from('bot_sessions').delete().eq('phone', phone);
-  },
-  isAdmin: async (phone) => (await db.from('bot_admins').select('*').eq('phone', phone).maybeSingle()).data,
+  // Compara sem o 9 extra: o painel grava 55 11 9xxxx-xxxx, o WhatsApp às vezes usa o número antigo.
+  isAdmin: async (phone) => ((await db.from('bot_admins').select('*')).data ?? []).find((a) => samePhone(a.phone, phone)) || null,
   listNews: async () => (await db.from('news').select('*').eq('published', true).order('created_at', { ascending: false }).limit(3)).data ?? [],
   subscribe: async (phone, name, on) => {
     if (on) await db.from('subscribers').upsert({ phone, name });
@@ -69,9 +98,14 @@ const ctx = {
     if (error) throw new Error(error.message);
     return data;
   },
-  // Novidade criada pelo bot (#novidade) já sai enviada; marca para o verificador não reenviar.
-  createNews: async (n) => (await db.from('news').insert({ ...n, published: true, wa_sent_at: new Date().toISOString() }).select().single()).data,
-  broadcast,
+  findOrder: async (code) => (await db.from('orders').select('code, phone, total, items').eq('code', code).maybeSingle()).data,
+  // #novidade pelo WhatsApp: só grava; o envio fica com sendPendingNews para não travar as conversas.
+  createNews: async (n) => {
+    const { data, error } = await db.from('news').insert({ ...n, published: true }).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+  broadcast: async () => ({ queued: true }),
   listOpenOrders: async () =>
     (await db.from('orders').select('*').in('status', ['novo', 'confirmado', 'producao', 'pronto']).order('created_at')).data ?? [],
   notifyHuman: async (phone, name) => {
@@ -79,8 +113,25 @@ const ctx = {
   },
 };
 
-// Novidades publicadas no painel com o canal WhatsApp ficam pendentes até o bot enviar.
+const sessions = {
+  get: async (phone) => {
+    const { data, error } = await db.from('bot_sessions').select('data, updated_at').eq('phone', phone).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+  save: async (phone, data) => {
+    const { error } = data
+      ? await db.from('bot_sessions').upsert({ phone, data, updated_at: new Date().toISOString() })
+      : await db.from('bot_sessions').delete().eq('phone', phone);
+    if (error) throw new Error(error.message);
+  },
+};
+const core = createCore({ ctx, sessions });
+
+// Novidades publicadas com o canal WhatsApp (no painel ou por #novidade) ficam pendentes até o bot enviar.
+const NEWS_SQL = 'alter table public.news add column if not exists wa_sent_at timestamptz;';
 let checkingNews = false;
+let warnedNewsColumn = false;
 async function sendPendingNews() {
   if (checkingNews || !online) return;
   checkingNews = true;
@@ -88,11 +139,18 @@ async function sendPendingNews() {
     const since = new Date(Date.now() - 2 * 864e5).toISOString();
     const { data, error } = await db.from('news').select('*')
       .contains('channels', ['whatsapp']).eq('published', true).is('wa_sent_at', null).gte('created_at', since).order('created_at');
-    if (error) throw error;
+    if (error?.code === '42703') {
+      if (!warnedNewsColumn) console.error(`⚠️  Para enviar novidades, rode no SQL Editor do Supabase: ${NEWS_SQL}`);
+      warnedNewsColumn = true;
+      return;
+    }
+    if (error) throw new Error(error.message);
     for (const n of data ?? []) {
-      // Marca antes de enviar: se o bot cair no meio, não dispara duas vezes para os mesmos clientes.
-      await db.from('news').update({ wa_sent_at: new Date().toISOString() }).eq('id', n.id);
-      await broadcast(n);
+      // Marca antes de enviar (e só se ninguém marcou): se o bot cair no meio, não repete o disparo.
+      const { data: claimed, error: e } = await db.from('news').update({ wa_sent_at: new Date().toISOString() })
+        .eq('id', n.id).is('wa_sent_at', null).select('id');
+      if (e) throw new Error(e.message);
+      if (claimed?.length) await broadcast(n);
     }
   } catch (e) {
     console.error('erro ao verificar novidades', e.message);
@@ -101,83 +159,125 @@ async function sendPendingNews() {
   }
 }
 
-// O WhatsApp pode identificar o contato por um "LID" em vez do número; o pedido precisa do número.
-async function senderPhone(key) {
-  const group = isJidGroup(key.remoteJid);
-  const jid = group ? key.participant : key.remoteJid;
-  const alt = group ? key.participantAlt : key.remoteJidAlt;
+// O WhatsApp às vezes identifica o contato por um "LID" em vez do número; pedido e conversa usam o número.
+async function pnOf(jid, alt) {
+  if (!jid) return '';
   if (!isLidUser(jid)) return digits(jid);
   if (alt && !isLidUser(alt)) return digits(alt);
-  const pn = await sock.signalRepository?.lidMapping?.getPNForLID(jid).catch(() => null);
-  return pn ? digits(pn) : '';
-}
-
-function textOf(m) {
-  const c = m.message || {};
-  return c.conversation || c.extendedTextMessage?.text || c.imageMessage?.caption || c.buttonsResponseMessage?.selectedDisplayText
-    || c.listResponseMessage?.title || '';
-}
-
-async function onMessage(m) {
-  const { key } = m;
-  if (key.fromMe || !m.message || key.remoteJid === 'status@broadcast' || key.remoteJid?.endsWith('@newsletter')) return;
-  const isGroup = isJidGroup(key.remoteJid);
-  const text = textOf(m).trim();
-  if (!text) {
-    if (!isGroup) await sendText(key.remoteJid, 'Por enquanto eu só entendo texto 🙈 Mande *oi* para ver o menu.');
-    return;
-  }
-  const phone = await senderPhone(key);
-  // Em grupo o motor só responde a #pedido e continua a conversa no privado.
-  const replyTo = isGroup ? jidNormalizedUser(key.participantAlt || key.participant) : key.remoteJid;
-  if (!phone) {
-    if (!isGroup) await sendText(replyTo, 'Não consegui identificar seu número 😓 Faça seu pedido pelo site' + (SITE_URL ? `: ${SITE_URL}` : '.'));
-    return;
-  }
   try {
-    const replies = await handleMessage({ phone, text, profileName: m.pushName, isGroup }, ctx);
-    for (const r of replies) await sendText(replyTo, r);
-  } catch (e) {
-    console.error(e);
-    await sendText(replyTo, 'Ops, algo deu errado por aqui 😓 Tente de novo em instantes ou mande *menu*.');
+    const pn = await sock.signalRepository?.lidMapping?.getPNForLID(jid);
+    return pn ? digits(pn) : '';
+  } catch {
+    return '';
+  }
+}
+
+const textOf = (c) => c.conversation || c.extendedTextMessage?.text || c.imageMessage?.caption || c.videoMessage?.caption
+  || c.documentMessage?.caption || c.buttonsResponseMessage?.selectedDisplayText || c.listResponseMessage?.title || '';
+const MEDIA = ['imageMessage', 'videoMessage', 'ptvMessage', 'audioMessage', 'documentMessage', 'stickerMessage', 'contactMessage', 'locationMessage'];
+const hasContent = (c) => !!c && (!!textOf(c) || MEDIA.some((k) => c[k]));
+const tsMs = (t) => 1000 * Number(typeof t === 'object' && t?.toNumber ? t.toNumber() : t);
+
+async function onMessage(m, type) {
+  const { key } = m;
+  const jid = key.remoteJid || '';
+  if (!m.message || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return; // status e listas de transmissão
+  const content = normalizeMessageContent(m.message); // abre mensagens temporárias, de visualização única…
+  if (!hasContent(content)) return; // reações, confirmações, mensagens apagadas
+  const isGroup = !!isJidGroup(jid);
+
+  if (key.fromMe) {
+    // Alguém da loja escreveu pelo celular (ou WhatsApp Web): o bot sai dessa conversa por 12 h.
+    // O que o próprio bot envia chega como 'append'; só 'notify' veio de outro aparelho.
+    if (type !== 'notify' || isGroup || sentIds.has(key.id)) return;
+    const phone = await pnOf(jid, key.remoteJidAlt);
+    if (!phone || phone === digits(sock.user?.id)) return;
+    if (Date.now() - (pausedAt.get(phone) || 0) < PAUSE_WRITE_MS) return;
+    pausedAt.set(phone, Date.now());
+    await core.pause(phone);
+    log(`bot pausado com +${phone}: resposta pelo celular`);
+    return;
+  }
+  if (type !== 'notify' && !(Date.now() - tsMs(m.messageTimestamp) <= CATCH_UP_MS)) return;
+
+  const text = textOf(content).trim();
+  const phone = await pnOf(isGroup ? key.participant : jid, isGroup ? key.participantAlt : key.remoteJidAlt);
+  // Em grupo a resposta vai para o privado de quem pediu.
+  const replyTo = isGroup ? jidNormalizedUser(key.participantAlt || key.participant) : jid;
+  if (!phone) {
+    if (!isGroup && text && detectIntent(text, await listProducts())) {
+      await sendText(replyTo, `Não consegui identificar seu número 😓 Faça seu pedido pelo site${SITE_URL ? `: ${SITE_URL}` : '.'}`);
+    }
+    return;
+  }
+  const replies = await core.handleIncoming({ phone, text, profileName: m.pushName, isGroup });
+  for (const r of replies) await sendText(replyTo, r);
+}
+
+function onConnection({ connection, lastDisconnect, qr }) {
+  if (qr) {
+    attempt = 0;
+    console.log('\nNo celular da loja: WhatsApp → Aparelhos conectados → Conectar um aparelho → escaneie (também aparece no painel):\n');
+    qrcodeTerminal.generate(qr, { small: true });
+    QRCode.toDataURL(qr, { margin: 1, width: 320 })
+      .then((url) => setStatus({ state: 'qr', qr: url }))
+      .catch((e) => console.error('erro ao gerar QR Code', e.message));
+  }
+  if (connection === 'open') {
+    online = true;
+    attempt = 0;
+    const phone = digits(sock.user?.id);
+    log(`✅ Conectado ao WhatsApp (+${phone}). Bot no ar.`);
+    setStatus({ state: 'online', qr: null, phone });
+  }
+  if (connection === 'close') {
+    online = false;
+    const code = lastDisconnect?.error?.output?.statusCode;
+    let wait = Math.min(60e3, 3e3 * ++attempt);
+    if (code === DisconnectReason.loggedOut) {
+      // O aparelho foi removido no celular: a sessão não vale mais, então gera um QR Code novo.
+      log('❌ WhatsApp desconectado pelo celular. Gerando um QR Code novo (painel → Bot WhatsApp).');
+      rmSync(AUTH_DIR, { recursive: true, force: true });
+      setStatus({ state: 'desconectado', qr: null, phone: null });
+    } else if (code === DisconnectReason.connectionReplaced) {
+      wait = 120e3;
+      log('Outra cópia do bot conectou com este WhatsApp; tento de novo em 2 min.');
+    } else {
+      log(`Conexão caiu (${code ?? '?'}), reconectando em ${wait / 1000}s...`);
+    }
+    if (status.state === 'online') setStatus({ state: 'reconectando' });
+    setTimeout(() => start().catch((e) => { console.error(e); process.exit(1); }), wait);
   }
 }
 
 async function start() {
-  const { state, saveCreds } = await useMultiFileAuthState(new URL('./auth', import.meta.url).pathname);
-  sock = makeWASocket({ auth: state, logger: pino({ level: 'warn' }), markOnlineOnConnect: false, browser: ['Um Doce Bot', 'Chrome', '1.0'] });
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  sock = makeWASocket({ auth: state, logger: pino({ level: 'error' }), browser: Browsers.macOS('Um Doce Bot'), markOnlineOnConnect: false });
   sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      console.log('\nNo celular da loja: WhatsApp → Aparelhos conectados → Conectar um aparelho → escaneie:\n');
-      qrcode.generate(qr, { small: true });
-    }
-    if (connection === 'open') { online = true; console.log('✅ Conectado ao WhatsApp. Bot no ar.'); heartbeat(); }
-    if (connection === 'close') {
-      online = false;
-      const code = lastDisconnect?.error?.output?.statusCode;
-      if (code === DisconnectReason.loggedOut) {
-        console.error('❌ O aparelho foi desconectado no celular. Apague a pasta bot/auth e rode de novo para escanear outro QR.');
-        process.exit(1);
-      }
-      console.log('Conexão caiu, reconectando...');
-      setTimeout(start, 3000);
-    }
-  });
-
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return; // ignora histórico sincronizado ao conectar
-    for (const m of messages) await onMessage(m);
+  sock.ev.on('connection.update', onConnection);
+  // Uma mensagem por vez: duas mensagens seguidas do mesmo cliente não disputam a mesma etapa da conversa.
+  sock.ev.on('messages.upsert', ({ messages, type }) => {
+    for (const m of messages) queue = queue.then(() => onMessage(m, type)).catch((e) => console.error('erro ao tratar mensagem', e));
   });
 }
 
-// Sinal de vida lido pela aba "Bot WhatsApp" do painel.
-async function heartbeat() {
-  if (!online) return;
-  const { error } = await db.from('settings').upsert({ key: 'bot', value: { last_seen: new Date().toISOString(), phone: digits(sock.user?.id) } });
-  if (error) console.error('erro ao gravar status', error.message);
+// Confere a chave antes de conectar: com a chave errada o bot não grava pedidos.
+const check = await db.from('settings').select('key').limit(1);
+if (check.error) {
+  console.error('Não consegui acessar o Supabase. Confira SUPABASE_SECRET_KEY no arquivo .env:', check.error.message);
+  process.exit(1);
+}
+if ((await db.from('news').select('wa_sent_at').limit(1)).error?.code === '42703') {
+  console.error(`⚠️  Para enviar novidades, rode no SQL Editor do Supabase: ${NEWS_SQL}`);
+  warnedNewsColumn = true;
+}
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () => {
+    await setStatus({ state: 'desligado', qr: null }).catch(() => {});
+    process.exit(0);
+  });
 }
 
-start();
-setInterval(() => { heartbeat(); sendPendingNews(); }, NEWS_POLL_MS);
+await setStatus({ state: 'iniciando', qr: null });
+await start();
+setInterval(() => { setStatus(); sendPendingNews(); }, TICK_MS);

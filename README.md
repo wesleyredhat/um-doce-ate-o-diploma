@@ -5,10 +5,10 @@ Roda 100% estático no **GitHub Pages**; dados e login ficam no **Supabase** (pl
 
 | | |
 |---|---|
-| Loja | `index.html` — carrossel de destaques, cardápio, pedido simplificado (nome, WhatsApp, produto, quantidade), novidades, Carteirinha do Formando |
-| Painel | `admin.html` — login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, bot, ajustes |
-| Bot | `bot/` — WhatsApp comum conectado por QR Code; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
-| Banco | `supabase/schema.sql` — tabelas, RLS e funções `place_order` / `loyalty_stamps` |
+| Loja | `index.html`: carrossel de destaques, cardápio, pedido simplificado (nome, WhatsApp, produto, quantidade), novidades, Carteirinha do Formando |
+| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, bot, ajustes |
+| Bot | `bot/`: WhatsApp comum conectado por QR Code; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
+| Banco | `supabase/schema.sql`: tabelas, RLS e funções `place_order` / `loyalty_stamps` |
 | Especificação | [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md) |
 
 ## 1. Testar agora (modo demonstração)
@@ -27,7 +27,7 @@ python3 -m http.server 8080
 
 1. Crie o repositório `um-doce-ate-o-diploma` e envie os arquivos para a branch `main`.
 2. **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `(root)`**.
-3. Endereço: `https://<seu-usuario>.github.io/um-doce-ate-o-diploma/` (painel em `/admin.html`).
+3. Endereço: `https://umdoceateodiploma.com.br/` (painel em `/admin.html`). Domínio no registro.br: 4 registros A para os IPs do GitHub Pages (185.199.108-111.153) e CNAME `www` → `wesleyredhat.github.io`.
 
 O arquivo `.nojekyll` garante que todas as pastas sejam servidas como estão.
 
@@ -66,14 +66,20 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
    cp .env.example .env
    ```
 3. Abra `bot/.env` e cole em `SUPABASE_SECRET_KEY` a **Secret key** (Supabase → Project Settings → API Keys). Essa chave dá acesso total ao banco: fica só nesse arquivo, que não vai para o GitHub.
-4. `npm start` → aparece um QR Code. No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie.
-5. Deixe o terminal aberto. A aba **Bot WhatsApp** do painel mostra se o bot está online.
-6. Para rodar em segundo plano (liga sozinho com o Mac e reinicia se cair): pare o `npm start` com Ctrl+C e rode `./instalar-servico-mac.sh`. Log em `bot/bot.log`; para desinstalar, `./instalar-servico-mac.sh remover`.
+4. `./instalar-servico-mac.sh` → o bot passa a rodar em segundo plano, liga sozinho com o Mac e reinicia se cair (log em `bot/bot.log`; para desinstalar, `./instalar-servico-mac.sh remover`). Para testar no terminal sem instalar: `npm start`.
+5. Conecte o WhatsApp: o QR Code aparece no painel, aba **Bot WhatsApp** (e também no terminal/log). No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie. A mesma aba mostra depois se o bot está online.
 
-- A sessão fica salva em `bot/auth/`; ao reiniciar não pede QR de novo. Para trocar de número, apague essa pasta.
-- Novidades publicadas no painel com o canal **WhatsApp** são enviadas pelo bot em até 1 minuto aos clientes inscritos (opção 4 do menu), com pausa de alguns segundos entre cada envio.
+**Quando o bot responde** (o número da loja também é de uso pessoal; regras em `bot/core.js`, testes em `bot/core.test.js`, `npm test`):
+
+- Só mensagens identificadas como encomenda: `menu`, `cardápio`, `#pedido`, os botões do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX", "Quero receber as novidades") ou o pedido escrito com produto e quantidade ("quero 10 brigadeiros e 2 empadinhas"). Conversas pessoais ficam sem resposta automática.
+- Depois de entrar na conversa, segue até o pedido terminar ou até 30 min sem resposta.
+- Se alguém da loja responder pelo celular, o bot fica 12 h quieto com aquela pessoa; `menu` ou `cardápio` chamam o bot de volta.
+- A mensagem do site com o código do pedido só confirma o pedido (que já foi gravado pelo site) e não cria outro.
+- Grupos: só mensagens que começam com `#pedido`; a conversa continua no privado.
+
+- A sessão fica salva em `bot/auth/`. Se o aparelho for desconectado no celular, o bot apaga a sessão e mostra um QR Code novo no painel.
+- Novidades publicadas no painel (ou por `#novidade`) com o canal **WhatsApp** são enviadas pelo bot em até 1 minuto aos clientes inscritos (opção 4 do menu), com pausa de alguns segundos entre cada envio.
 - **Risco**: conexão por QR não é oficial. O WhatsApp pode bloquear números que mandam muitas mensagens para quem não tem o contato salvo. Use para responder clientes e envie novidades só a quem se inscreveu.
-- **Grupos**: o bot responde no grupo apenas a mensagens que começam com `#pedido` e continua a conversa no privado.
 
 A alternativa oficial (WhatsApp Business Cloud API, paga por conversa) continua em `supabase/functions/whatsapp-bot`; para usá-la, preencha `BOT_FUNCTION_URL` em `config.js`.
 

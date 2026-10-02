@@ -1,4 +1,4 @@
--- Um Doce Até o Diploma — schema de produção (Supabase / Postgres)
+-- Um Doce Até o Diploma: schema de produção (Supabase / Postgres)
 -- Execute no SQL Editor do Supabase. Idempotente: pode rodar de novo com segurança.
 
 create extension if not exists pgcrypto;

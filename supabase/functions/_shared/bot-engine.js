@@ -4,7 +4,7 @@
 //
 // handleMessage(msg, ctx) -> Promise<string[]>  (respostas a enviar, em ordem)
 //   msg: { phone, text, profileName, isGroup }
-//   ctx: adaptador de dados (ver README / whatsapp-bot/index.ts)
+//   ctx: adaptador de dados (ver README / whatsapp-bot/index.ts; findOrder é opcional)
 
 const brl = (v) => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -43,7 +43,47 @@ export function parseQuickOrder(text, products) {
   return out;
 }
 
-const cartText = (cart) => cart.map((it) => `• ${it.qty}x ${it.name} — ${brl(it.qty * it.price)}`).join('\n');
+// Número de uso pessoal: o bot só entra na conversa quando a mensagem é claramente sobre encomenda.
+//   'explicit' → palavra-chave ou mensagem pronta do site (também chama o bot de volta depois de uma pausa)
+//   'order'    → produto com quantidade ("quero 10 brigadeiros") ou pergunta de preço de um produto
+//   null       → conversa pessoal: o bot fica em silêncio
+const EXPLICIT = [
+  /^(?:ver |o |me (?:manda|mande|envia|envie) o )?menu\b/,
+  /\bcardapio\b/,
+  /^#(?:pedido|cardapio|menu)\b/,
+  /\bvim pelo site\b/,
+  /\bdd-[a-z0-9]{4}\b/,
+  /\b(?:receber|parar)(?: as)? novidades\b/,
+  /\b(?:quero|queria|gostaria de|preciso|posso) (?:fazer (?:um |uma )?(?:pedido|encomenda)|encomendar)\b/,
+];
+const QTY_WORDS = new Set(['dois', 'duas', 'tres', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'doze', 'quinze', 'vinte', 'trinta', 'cinquenta', 'cem']);
+const ASK_WORDS = /\b(?:quanto|valor|preco|precos|quero|queria|gostaria|encomendar|reservar?|separar?)\b/;
+
+export function detectIntent(text, products) {
+  const t = norm(text);
+  if (EXPLICIT.some((re) => re.test(t))) return 'explicit';
+  // "Brigadeiro", "Empadinha de Frango..." → só a primeira palavra conta ("1 kg de frango" não é pedido)
+  const heads = products.map((p) => singular(norm(p.name).split(/[^a-z0-9]+/)[0] || '')).filter((h) => h.length > 3);
+  const isHead = (w) => heads.some((h) => w.startsWith(h.slice(0, Math.max(4, h.length - 1))));
+  const words = t.replace(/\b(uma? )?duzias? de\b/g, '12 ').split(/[^a-z0-9]+/).filter(Boolean);
+  for (let i = 0; i < words.length - 1; i++) {
+    const qty = /^\d{1,3}x?$/.test(words[i]) || QTY_WORDS.has(words[i]);
+    const next = words[i + 1] === 'x' ? words[i + 2] : words[i + 1];
+    if (qty && next && isHead(next)) return 'order';
+  }
+  if (ASK_WORDS.test(t) && words.some(isHead)) return 'order';
+  return null;
+}
+
+const ACK = /^(?:obrigad|brigad|valeu|vlw|ok\b|okay|beleza|blz|show|top|perfeito|otimo|joia|massa|👍|🙏|❤|♥|😘|🥰)/;
+
+// O WhatsApp às vezes guarda celulares antigos sem o 9 (55 11 8888-7777); o site sempre grava com o 9.
+export const samePhone = (a, b) => {
+  const k = (p) => { let d = String(p || '').replace(/\D/g, '').replace(/^55/, ''); if (d.length === 11) d = d.slice(0, 2) + d.slice(3); return d; };
+  return !!a && k(a) === k(b);
+};
+
+const cartText = (cart) => cart.map((it) => `• ${it.qty}x ${it.name}: ${brl(it.qty * it.price)}`).join('\n');
 const cartTotal = (cart) => cart.reduce((s, it) => s + it.qty * it.price, 0);
 
 function menuText(settings, name) {
@@ -62,7 +102,7 @@ _Dica: pode mandar direto, tipo "quero 10 brigadeiros e 2 empadinhas"._`;
 
 function catalogText(products) {
   const groups = {};
-  products.forEach((p, i) => (groups[p.category] ||= []).push(`*${i + 1}* ${p.name} — ${brl(p.price)}`));
+  products.forEach((p, i) => (groups[p.category] ||= []).push(`*${i + 1}* ${p.name}: ${brl(p.price)}`));
   return Object.entries(groups)
     .map(([cat, lines]) => `*${cat === 'salgados' ? '🥧 Salgados' : '🍫 Doces'}*\n${lines.join('\n')}`)
     .join('\n\n');
@@ -88,7 +128,8 @@ async function adminCommand(text, admin, ctx) {
       const [title, ...body] = arg.split('|');
       const news = await ctx.createNews({ title: title.trim(), body: body.join('|').trim(), author: admin.name, channels: ['site', 'whatsapp'] });
       const r = await ctx.broadcast(news);
-      return [`✨ Novidade publicada no site${r?.sent ? ` e enviada para ${r.sent} cliente(s)` : ''}!\n\n*${news.title}*\n${news.body || ''}`];
+      const wa = r?.sent ? ` e enviada para ${r.sent} cliente(s)` : r?.queued ? ' e os inscritos recebem pelo WhatsApp em instantes' : '';
+      return [`✨ Novidade publicada no site${wa}!\n\n*${news.title}*\n${news.body || ''}`];
     }
     case '#pedidos': {
       if (!admin.can_manage_orders) return ['Sem permissão para ver pedidos.'];
@@ -106,7 +147,7 @@ async function adminCommand(text, admin, ctx) {
       return [lines.length ? `👩‍🍳 *Para produzir*\n${lines.join('\n')}` : 'Nada para produzir agora.'];
     }
     default:
-      return [`Comandos de administradora:\n*#novidade Título | texto* — publica no site e envia aos inscritos\n*#pedidos* — pedidos em aberto\n*#producao* — o que produzir agora`];
+      return [`Comandos de administradora:\n*#novidade Título | texto*: publica no site e envia aos inscritos\n*#pedidos*: pedidos em aberto\n*#producao*: o que produzir agora`];
   }
 }
 
@@ -140,13 +181,32 @@ export async function handleMessage(msg, ctx) {
     await save(null);
     return ['Tudo bem, cancelei por aqui. Quando bater a vontade, é só mandar *oi* 💛'];
   }
+  if (/\breceber(?: as)? novidades\b/.test(t)) {
+    await ctx.subscribe(phone, msg.profileName, true);
+    return ['Pronto! 🔔 Você vai receber nossas novidades por aqui. Para sair, mande *parar novidades*.'];
+  }
+  if (/\bparar(?: as)? novidades\b/.test(t)) {
+    await ctx.subscribe(phone, msg.profileName, false);
+    return ['Ok, não vou mais enviar novidades. 💛'];
+  }
+
+  // Mensagem pronta do site depois de pedir ("Acabei de fazer o pedido DD-XXXX"): o pedido já existe,
+  // então só confirma; sem isso os itens da mensagem virariam um segundo pedido.
+  const code = /\bdd-[a-z0-9]{4}\b/.exec(t)?.[0].toUpperCase();
+  if (code) {
+    await save(null);
+    const o = await ctx.findOrder?.(code);
+    if (!o || !samePhone(o.phone, phone)) return [`Recebi sua mensagem sobre o pedido *${code}* 💛 Já vamos conferir e te respondemos por aqui!`];
+    const pix = settings.pix_key ? `\n\n💸 Pix: *${settings.pix_key}*` : '';
+    return [`🎓 Pedido *${o.code}* recebido! ✅\n${o.items.map((i) => `• ${i.qty}x ${i.name}`).join('\n')}\nTotal: *${brl(o.total)}*${pix}\n\nTe aviso por aqui quando estiver pronto 💛`];
+  }
   if (s.state === 'human') return []; // atendimento humano em andamento
 
   if (settings.accepting === false && ['menu', 'product', 'qty'].includes(s.state) && (t === '1' || /\d/.test(t))) {
     return [`No momento estamos com a agenda cheia 🥲 ${settings.notice || ''}\nMande *3* para ver as novidades.`];
   }
 
-  // Atalho: pedido em linguagem natural ("quero 10 brigadeiros e 2 empadinhas") — também em grupos com #pedido
+  // Atalho: pedido em linguagem natural ("quero 10 brigadeiros e 2 empadinhas"), também em grupos com #pedido
   const quick = parseQuickOrder(text.replace(/^#pedido/i, ''), products);
   if (quick.length && ['menu', 'product', 'more'].includes(s.state)) {
     const cart = s.cart || [];
@@ -163,8 +223,8 @@ export async function handleMessage(msg, ctx) {
         await save({ ...s, state: 'product' });
         return [`O que vai ser? Mande o *número* do produto:\n\n${catalogText(products)}`];
       }
-      if (t === '2') {
-        return [`📋 *Cardápio*\n\n${products.map((p) => `*${p.name}* — ${brl(p.price)}\n_${p.description || ''}_`).join('\n\n')}\n\nMande *1* para encomendar.`];
+      if (t === '2' || /\bcardapio\b/.test(t)) {
+        return [`📋 *Cardápio*\n\n${products.map((p) => `*${p.name}*: ${brl(p.price)}\n_${p.description || ''}_`).join('\n\n')}\n\nMande *1* para encomendar.`];
       }
       if (t === '3') {
         const news = (await ctx.listNews()).slice(0, 3);
@@ -175,15 +235,12 @@ export async function handleMessage(msg, ctx) {
         await ctx.subscribe(phone, msg.profileName, true);
         return ['Pronto! 🔔 Você vai receber nossas novidades por aqui. Para sair, mande *parar novidades*.'];
       }
-      if (t === 'parar novidades') {
-        await ctx.subscribe(phone, msg.profileName, false);
-        return ['Ok, não vou mais enviar novidades. 💛'];
-      }
       if (t === '5') {
         await save({ ...s, state: 'human' });
         await ctx.notifyHuman?.(phone, msg.profileName);
         return ['Chamei a Cris! Ela responde assim que sair do forno 👩‍🍳 (para voltar ao menu, mande *menu*)'];
       }
+      if (ACK.test(t)) return []; // "obrigada", "ok"… não repete o menu
       return [menuText(settings, msg.profileName)];
     }
 
@@ -197,7 +254,7 @@ export async function handleMessage(msg, ctx) {
       }
       if (!p) return [`Não achei esse 🤔 Mande o *número* do produto:\n\n${catalogText(products)}`];
       await save({ ...s, state: 'qty', pending: p.id });
-      return [`*${p.name}* — ${brl(p.price)} cada.\nQuantas unidades?`];
+      return [`*${p.name}*: ${brl(p.price)} cada.\nQuantas unidades?`];
     }
 
     case 'qty': {
