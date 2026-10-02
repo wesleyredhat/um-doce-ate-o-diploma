@@ -1,4 +1,4 @@
--- Testes da forma de entrega no place_order (entrega no ponto com dia marcado ou "combinar").
+-- Testes da forma de entrega no place_order (entrega no ponto com dia marcado ou "combinar") e do "já pago" do balcão.
 -- Rode no SQL Editor do Supabase depois do schema.sql. Tudo é desfeito no final (rollback):
 -- se uma regra falhar, o editor mostra o erro com a explicação; se passar, aparece "Success".
 -- Os telefones usam DDD 00, que não existe: não se misturam com pedidos de verdade.
@@ -52,6 +52,16 @@ begin
   perform pg_temp.fails_with('ponto', null, 'Escolha um dos dias de entrega disponíveis');
   perform pg_temp.fails_with('ponto', pg_temp.next_day(array[1, 2, 3, 5], 15), 'Escolha um dos dias de entrega disponíveis');
   perform pg_temp.fails_with('casa', null, 'Forma de entrega inválida');
+
+  -- "já pago" só vale para a loja: pelo site (anônimo) é ignorado
+  r := place_order('Dani Teste', '5500988884444', pg_temp.items(), 'web', '', null, 'combinar', null, true);
+  assert (select not paid from orders where code = r->>'code'), 'cliente não marca o próprio pedido como pago';
+  if exists (select 1 from admins) then
+    perform set_config('request.jwt.claim.sub', (select user_id::text from admins limit 1), true);
+    r := place_order('Edu Teste', '5500988885555', pg_temp.items(), 'balcao', '', null, 'combinar', null, true);
+    assert (select paid and channel = 'balcao' from orders where code = r->>'code'), 'pedido do balcão pago na hora';
+    perform set_config('request.jwt.claim.sub', '', true);
+  end if;
 
   -- sem ponto em Ajustes, entrega no ponto não vale
   update settings set value = value - 'delivery_spot' where key = 'store';

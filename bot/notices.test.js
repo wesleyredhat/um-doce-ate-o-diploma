@@ -50,6 +50,13 @@ test('confirmação com cupom mostra o desconto; sem chave Pix vai uma mensagem 
   assert.doesNotMatch(texts[0], /Pix/);
 });
 
+test('confirmação de pedido já pago (balcão): sem Pix', () => {
+  const texts = noticeTexts('confirmado', { ...ORDER, paid: true }, { pix_key: 'pix@doce.com' });
+  assert.equal(texts.length, 1);
+  assert.match(texts[0], /está confirmado ✅[\s\S]*Total: \*R\$ 66,00\*\n\n✅ Pagamento já recebido\. Obrigada!/);
+  assert.doesNotMatch(texts[0], /Pix/);
+});
+
 test('pronto: disponível para entrega', () => {
   const [a] = noticeTexts('pronto', ORDER, {});
   assert.match(a, /^Oi, Ana! Seu pedido \*DD-K7P2\* está prontinho e disponível para entrega/);

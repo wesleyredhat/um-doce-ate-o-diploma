@@ -113,7 +113,7 @@ function buildOrder({ customer_name, phone, items, channel = 'web', status = 'no
   const cost_total = items.reduce((s, it) => s + it.qty * it.unit_cost, 0);
   const ts = created_at || new Date().toISOString();
   return { id: uid(), code: orderCode(), customer_name, phone: normalizePhone(phone), items, total, cost_total, channel, status, notes,
-    created_at: ts, updated_at: ts, coupon_code: null, discount: 0, delivery: 'combinar', delivery_date: null };
+    created_at: ts, updated_at: ts, coupon_code: null, discount: 0, delivery: 'combinar', delivery_date: null, paid: false };
 }
 
 const DemoStore = {
@@ -146,7 +146,7 @@ const DemoStore = {
   },
   async deleteProduct(id) { write('products', read('products', []).filter((p) => p.id !== id)); },
 
-  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null }) {
+  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null, paid = false }) {
     const products = read('products', []);
     const lines = items.map(({ product_id, qty }) => {
       const p = products.find((x) => x.id === product_id && x.active);
@@ -155,6 +155,7 @@ const DemoStore = {
     });
     if (!lines.length) throw new Error('Escolha ao menos um produto');
     const order = buildOrder({ customer_name: customer_name.trim(), phone, items: lines, channel, notes });
+    order.paid = !!paid; // demonstração: quem chama é sempre o painel
     // Mesma regra de place_order: um dos dias marcados em Ajustes, de amanhã até 14 dias.
     if (delivery === 'ponto') {
       if (!deliveryDates(read('settings', {}), Date.now(), DELIVERY_MAX_DAYS).includes(delivery_date)) throw new Error('Escolha um dos dias de entrega disponíveis');
@@ -352,11 +353,12 @@ const SupabaseStore = {
   },
   async deleteProduct(id) { must(await sb.from('products').delete().eq('id', id)); },
 
-  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null }) {
+  async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null, paid = false }) {
     // Sem cupom e sem entrega no ponto, a chamada é a mesma de antes do schema novo: pedido continua funcionando enquanto o banco não é atualizado.
     const args = { p_name: customer_name, p_phone: normalizePhone(phone), p_items: items, p_channel: channel, p_notes: notes };
     if (normCode(coupon)) args.p_coupon = normCode(coupon);
     if (delivery === 'ponto') Object.assign(args, { p_delivery: 'ponto', p_delivery_date: delivery_date });
+    if (paid) args.p_paid = true; // só vale para a loja (place_order confere is_admin)
     return must(await sb.rpc('place_order', args));
   },
   async checkCoupon(code, phone = '', items = []) {

@@ -49,6 +49,8 @@ alter table public.orders add column if not exists discount numeric(10, 2) not n
 -- Entrega: 'ponto' = lugar fixo com dia marcado (settings.store.delivery_spot), 'combinar' = outro local ou retirada.
 alter table public.orders add column if not exists delivery text not null default 'combinar' check (delivery in ('ponto', 'combinar'));
 alter table public.orders add column if not exists delivery_date date;
+-- Pago na hora (dinheiro ou Pix no balcão): a confirmação sai sem a cobrança. Só a loja marca (place_order e painel).
+alter table public.orders add column if not exists paid boolean not null default false;
 
 create table if not exists public.news (
   id uuid primary key default gen_random_uuid(),
@@ -221,9 +223,10 @@ end $$;
 -- Cria o pedido calculando preço, custo e desconto NO SERVIDOR (o cliente nunca define valores).
 drop function if exists public.place_order(text, text, jsonb, text, text);
 drop function if exists public.place_order(text, text, jsonb, text, text, text);
+drop function if exists public.place_order(text, text, jsonb, text, text, text, text, date);
 create or replace function public.place_order(
   p_name text, p_phone text, p_items jsonb, p_channel text default 'web', p_notes text default '', p_coupon text default null,
-  p_delivery text default 'combinar', p_delivery_date date default null
+  p_delivery text default 'combinar', p_delivery_date date default null, p_paid boolean default false
 ) returns json
 -- "extensions": no Supabase o pgcrypto (gen_random_bytes, usado no código do pedido) fica nesse esquema.
 language plpgsql security definer set search_path = public, extensions as $$
@@ -276,10 +279,10 @@ begin
     exit when length(v_code) = 7 and not exists (select 1 from orders where code = v_code);
   end loop;
 
-  insert into orders (code, customer_name, phone, items, total, cost_total, channel, notes, coupon_code, discount, delivery, delivery_date)
+  insert into orders (code, customer_name, phone, items, total, cost_total, channel, notes, coupon_code, discount, delivery, delivery_date, paid)
   values (v_code, trim(p_name), regexp_replace(p_phone, '\D', '', 'g'), v_items, v_total - v_discount, v_cost, p_channel,
           left(coalesce(p_notes, ''), 300), v_coupon, v_discount, coalesce(p_delivery, 'combinar'),
-          case when p_delivery = 'ponto' then p_delivery_date end);
+          case when p_delivery = 'ponto' then p_delivery_date end, coalesce(p_paid, false) and is_admin());
 
   return json_build_object('code', v_code, 'total', v_total - v_discount, 'subtotal', v_total, 'discount', v_discount, 'coupon', v_coupon,
                            'delivery', coalesce(p_delivery, 'combinar'), 'delivery_date', case when p_delivery = 'ponto' then p_delivery_date end);
@@ -399,7 +402,7 @@ select b.k as phone_key, b.phone, b.name, b.orders, b.spent, b.first_order, b.la
   (select count(*)::int from loyalty_rewards r where r.phone_key = b.k) as rewards_given
 from base b left join prods p on p.k = b.k;
 
-grant execute on function public.place_order(text, text, jsonb, text, text, text, text, date) to anon, authenticated;
+grant execute on function public.place_order(text, text, jsonb, text, text, text, text, date, boolean) to anon, authenticated;
 grant execute on function public.check_coupon(text, text, jsonb) to anon, authenticated;
 -- coupon_discount só é chamada por place_order e check_coupon.
 revoke execute on function public.coupon_discount(text, text, numeric, boolean) from public, anon, authenticated;

@@ -43,6 +43,8 @@ export function noticeTexts(kind, o, store = {}) {
   const off = Number(o.discount) > 0 ? ` (já com ${brl(o.discount)} de desconto)` : '';
   const where = spot ? `\n📍 Entrega: ${deliveryText(o, store)}` : '';
   const head = `Oi, ${first}! Seu pedido *${o.code}* está confirmado ✅\n${items}\nTotal: *${brl(o.total)}*${off}${where}`;
+  // Pago na hora (registrado no painel): confirma sem cobrar.
+  if (o.paid) return [`${head}\n\n✅ Pagamento já recebido. Obrigada! 💛`];
   const pix = orderPix(store, o);
   if (!pix) return [`${head}\n\nJá já combinamos o pagamento por aqui 💛`];
   // O código vai sozinho na mensagem seguinte: um toque longo copia só ele. (O cartão Pix do WhatsApp Business

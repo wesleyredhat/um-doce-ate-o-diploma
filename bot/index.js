@@ -224,7 +224,7 @@ const notices = createNotices({
   db: {
     settings: () => ctx.getSettings(),
     pending: async () => must(await db.from('order_notices')
-      .select('id, kind, created_at, order:orders(id, code, customer_name, phone, items, total, discount, status, notes, delivery, delivery_date)')
+      .select('id, kind, created_at, order:orders(id, code, customer_name, phone, items, total, discount, status, notes, delivery, delivery_date, paid)')
       .eq('status', 'pendente').order('id').limit(50)),
     claim: async (id) => !!must(await db.from('order_notices').update({ status: 'enviando' }).eq('id', id).eq('status', 'pendente').select('id')).length,
     mark: async (id, patch) => must(await db.from('order_notices').update(patch).eq('id', id)),

@@ -96,7 +96,7 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 2. **Início**: saudação, KPIs do dia contra ontem, faturamento de 14 dias, canais, mais vendidos, pedidos em aberto.
 3. **Pedidos**: quadro Novo → Confirmado → Em produção → Pronto → Entregue (arrastar ou botão de avançar). Busca, filtro por canal, botão de WhatsApp com **mensagem pronta para cada status** (confirmação com Pix, “está no forno”, “prontinho”, agradecimento com contagem da carteirinha). Atualiza a cada 30 s, também com a aba em segundo plano, com aviso sonoro e contador na aba do navegador. Enquanto o navegador não libera o som (painel aberto já logado, sem clique), aparece o botão **Ativar som**.
 4. **Produção**: soma de unidades por produto dos pedidos não prontos, com detalhamento por pedido e impressão.
-5. **Novo pedido**: lançamento manual (balcão, telefone, Instagram).
+5. **Registrar pedido** (topo do painel, quadro de pedidos e "Mais" no celular): pedido feito pessoalmente, por telefone ou no Instagram, com os mesmos dados do site (produtos, WhatsApp, entrega, cupom, observação). "Já pago" (dinheiro ou Pix na hora) faz a confirmação sair sem cobrança; "Já confirmar" confirma na hora e a cliente recebe a confirmação pelo WhatsApp, seguindo o fluxo digital.
 6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.
 7. **Cupons**: % ou R$, pedido mínimo, vigência por data, cota de usos, uma vez por WhatsApp; mostra usos, vendas e desconto dado.
 8. **Campanhas**: público por filtro (todos, sumidos, quem comprou um produto, 3 pedidos ou mais, os 20 que mais gastaram, inscritos), mensagem com `{nome}` e cupom opcional, prévia, estimativa de término e progresso. O bot envia uma mensagem a cada 20 a 60 s, no horário e no limite diário configurados.
@@ -121,7 +121,7 @@ coupons     (id, code, kind[percent|fixed], value, min_order, starts_on, ends_on
 optouts     (phone_key, phone, created_at)              quem pediu para não receber campanhas nem novidades
 campaigns   (id, name, body, coupon_id, audience jsonb, status[enviando|pausada|concluida|cancelada], pause_reason, created_at, finished_at)
 campaign_sends (id, campaign_id, phone, phone_key, name, status[pendente|enviando|enviada|falhou|pulada], error, claimed_at, sent_at)
-orders.delivery [ponto|combinar], orders.delivery_date   ← ponto = settings.store.delivery_spot {label, days[0-6]}, de amanhã até 14 dias
+orders.paid (pago na hora, só a loja marca) · orders.delivery [ponto|combinar], orders.delivery_date   ← ponto = settings.store.delivery_spot {label, days[0-6]}, de amanhã até 14 dias
 loyalty_rewards (id, phone_key, order_id, given_at)   ← brindes da carteirinha já entregues; admin_customers traz delivered e rewards_given
 order_notices (id, order_id, kind[confirmado|pronto|entregue], status[pendente|enviando|enviada|falhou|pulada], error, created_at, sent_at)   ← um por pedido e tipo
              orders também guarda coupon_code e discount (total = subtotal − desconto)

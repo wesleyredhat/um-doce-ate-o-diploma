@@ -10,7 +10,7 @@ import {
 import { couponState, couponLabel, normCode, phoneKey } from './coupons.js';
 import { loyaltyOf, capelosText, loyaltyMessage } from './loyalty.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
-import { WEEKDAYS, dayLabel, deliveryText } from '../../supabase/functions/_shared/delivery.js';
+import { WEEKDAYS, dayLabel, deliveryText, spotOf, deliveryDates, COMBINE_LABEL } from '../../supabase/functions/_shared/delivery.js';
 import { PIX_TYPES, orderPix, pixKey, pixKeyType } from '../../supabase/functions/_shared/pix.js';
 
 const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], couponsError: '', campaigns: [], campaignCfg: {} };
@@ -100,9 +100,11 @@ $('#logoutBtn').addEventListener('click', async () => {
 });
 $('#refreshBtn').addEventListener('click', async () => { await loadAll(); render(); toast('Atualizado'); });
 $('#newOrderBtn')?.addEventListener('click', () => orderDialog());
+document.addEventListener('click', (e) => { if (e.target.closest('[data-new-order]')) orderDialog(); });
 $('#moreBtn')?.addEventListener('click', () => {
   openDialog(`<h2>Mais</h2><div class="more-grid">
     ${['produtos', 'novidades', 'clientes', 'fidelidade', 'campanhas', 'cupons', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', fidelidade: 'heart', campanhas: 'send', cupons: 'tag', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
+    <button data-new-order data-close>${icon('plus')} Registrar pedido</button>
     <a href="./" target="_blank">${icon('ext')} Ver loja</a>
     <button id="mLogout">${icon('logout')} Sair</button></div>`, (m) => {
     $('#mLogout', m).onclick = () => $('#logoutBtn').click();
@@ -337,7 +339,7 @@ function orderCard(o) {
   const s = st(o.status);
   const fresh = !S.seen.has(o.id);
   return `<article class="ocard ${fresh ? 'fresh' : ''}" style="--st:${s.color}" draggable="true" data-id="${o.id}">
-    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}${rewardDue(o) ? `<span class="ch" title="Completou a Carteirinha do Formando: coloque ${esc(CONFIG.LOYALTY_REWARD)} neste pedido">🎁 brinde</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
+    <div class="ocard__top"><span class="ocard__code">${esc(o.code)}</span><span class="ch ch--${o.channel}">${CHANNELS[o.channel] || o.channel}</span>${o.coupon_code ? `<span class="ch" title="Desconto de ${money(o.discount)}">🎟️ ${esc(o.coupon_code)}</span>` : ''}${atSpot(o) ? `<span class="ch" title="${esc(deliveryText(o, S.settings))}">📍 ${shortDay(o.delivery_date)}</span>` : ''}${o.paid ? '<span class="ch" title="Pago na hora">✅ pago</span>' : ''}${rewardDue(o) ? `<span class="ch" title="Completou a Carteirinha do Formando: coloque ${esc(CONFIG.LOYALTY_REWARD)} neste pedido">🎁 brinde</span>` : ''}<span class="ocard__time" title="${fmtDateTime(o.created_at)}">${timeAgo(o.created_at)}</span></div>
     <div class="ocard__who">${esc(o.customer_name)} <a href="${waLink('', o.phone)}" target="_blank" rel="noopener" style="font-weight:600;font-size:.82rem;color:var(--ink-soft)">${formatPhone(o.phone)}</a></div>
     <ul>${o.items.map((i) => `<li>${i.qty}× ${esc(i.name)}</li>`).join('')}</ul>
     ${o.notes ? `<div class="ocard__notes">📝 ${esc(o.notes)}</div>` : ''}
@@ -383,7 +385,7 @@ async function setStatus(id, status) {
     render();
     // Mesmas regras do gatilho orders_notice (supabase/schema.sql): saiu de "novo" = Pix; "pronto" = aviso; "entregue" = agradecimento.
     const what = [
-      prev === 'novo' && ['confirmado', 'producao', 'pronto'].includes(status) && 'o Pix',
+      prev === 'novo' && ['confirmado', 'producao', 'pronto'].includes(status) && (o.paid ? 'a confirmação' : 'o Pix'),
       status === 'pronto' && 'o aviso de pronto',
       status === 'entregue' && 'o agradecimento',
     ].filter(Boolean).join(' e ');
@@ -428,6 +430,7 @@ function viewOrders(v, signal) {
         ${[['all', 'Todos'], ...Object.entries(CHANNELS)].map(([k, l]) => `<button class="chip" aria-pressed="${OF.channel === k}" data-ch="${k}">${l}</button>`).join('')}
       </div>
       <label class="switch"><input type="checkbox" id="showDone" ${OF.showDone ? 'checked' : ''}/><i></i>Entregues e cancelados</label>
+      <button class="btn btn--sm" data-new-order>${icon('plus')} Registrar pedido</button>
     </div>
     <p class="hint no-print">Arraste os cartões entre colunas ou use o botão de avançar. O ícone do WhatsApp abre a mensagem pronta para o cliente.</p>
     <div class="board" id="board">
@@ -459,10 +462,15 @@ function viewOrders(v, signal) {
   });
 }
 
+// Registrar pedido feito pessoalmente, por telefone ou no Instagram, com os mesmos dados do site (entrega, cupom),
+// para seguir o fluxo digital: confirmação, Pix, aviso de pronto e agradecimento pelo WhatsApp.
 function orderDialog() {
   const active = S.products.filter((p) => p.active);
-  const lines = [{ product_id: active[0]?.id, qty: 1 }];
-  openDialog(`<h2>Novo pedido</h2><p class="hint">Para pedidos que chegaram por telefone, Instagram ou no balcão.</p>
+  if (!active.length) { toast('Cadastre um produto ativo antes', 'err'); return; }
+  const lines = [{ product_id: active[0].id, qty: 1 }];
+  const spot = spotOf(S.settings);
+  const dates = deliveryDates(S.settings);
+  openDialog(`<h2>Registrar pedido</h2><p class="hint">Para quem pediu pessoalmente, por telefone ou no Instagram. O pedido segue o mesmo caminho do site: confirmação, Pix, aviso de pronto e agradecimento pelo WhatsApp.</p>
     <form class="form" id="of">
       <div class="row">
         <label class="field"><span>Nome</span><input class="input" name="name" required /></label>
@@ -470,12 +478,19 @@ function orderDialog() {
       </div>
       <div id="mlines" class="form"></div>
       <button type="button" class="btn btn--soft btn--sm" id="madd" style="justify-self:start">${icon('plus')} Produto</button>
+      ${spot && dates.length ? `<div class="row">
+        <label class="field"><span>Entrega</span><select class="select" name="delivery"><option value="combinar">📍 ${esc(COMBINE_LABEL)}</option><option value="ponto">🎓 ${esc(spot.label)}</option></select></label>
+        <label class="field" id="mday" hidden><span>Dia da entrega</span><select class="select" name="delivery_date">${dates.map((d) => `<option value="${d}">${dayLabel(d)}</option>`).join('')}</select></label>
+      </div>` : ''}
       <div class="row">
-        <label class="field"><span>Canal</span><select class="select" name="channel">${Object.entries(CHANNELS).map(([k, l]) => `<option value="${k}" ${k === 'whatsapp' ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <label class="field"><span>Observação</span><input class="input" name="notes" /></label>
+        <label class="field"><span>Como pediu</span><select class="select" name="channel">${Object.entries(CHANNELS).filter(([k]) => k !== 'web').map(([k, l]) => `<option value="${k}" ${k === 'balcao' ? 'selected' : ''}>${k === 'balcao' ? 'Pessoalmente ou telefone' : l}</option>`).join('')}</select></label>
+        <label class="field"><span>Cupom (opcional)</span><input class="input" name="coupon" maxlength="20" autocomplete="off" autocapitalize="characters" placeholder="Ex.: VOLTA10" /></label>
       </div>
+      <label class="field"><span>Observação</span><input class="input" name="notes" maxlength="300" placeholder="Ex.: sem granulado" /></label>
+      <label class="switch"><input type="checkbox" name="paid" /><i></i>Já pago (dinheiro ou Pix na hora): a confirmação sai sem cobrar</label>
+      <label class="switch"><input type="checkbox" name="confirm" checked /><i></i>Já confirmar: a cliente recebe a confirmação pelo WhatsApp</label>
       <p class="err" id="oerr"></p>
-      <div class="form__actions"><strong id="mtotal" style="margin-right:auto;font-family:var(--f-display);font-size:1.4rem;color:var(--choc)"></strong><button class="btn" type="submit">Salvar pedido</button></div>
+      <div class="form__actions"><strong id="mtotal" style="margin-right:auto;font-family:var(--f-display);font-size:1.4rem;color:var(--choc)"></strong><button class="btn" type="submit">Registrar pedido</button></div>
     </form>`, (m, close) => {
     const f = $('#of', m);
     maskPhoneInput(f.phone);
@@ -490,22 +505,39 @@ function orderDialog() {
     f.addEventListener('change', (e) => {
       if (e.target.dataset.ls) lines[+e.target.dataset.ls].product_id = e.target.value;
       if (e.target.dataset.lq) lines[+e.target.dataset.lq].qty = Math.max(1, parseInt(e.target.value, 10) || 1);
+      if (e.target.name === 'delivery') $('#mday', m).hidden = e.target.value !== 'ponto';
       draw();
     });
     f.addEventListener('click', (e) => { const r = e.target.closest('[data-lr]'); if (r && lines.length > 1) { lines.splice(+r.dataset.lr, 1); draw(); } });
     $('#madd', m).onclick = () => { lines.push({ product_id: active[0].id, qty: 1 }); draw(); };
     f.onsubmit = async (e) => {
       e.preventDefault();
-      if (!isValidPhone(f.phone.value)) { $('#oerr', m).textContent = 'Telefone inválido'; return; }
+      const err = $('#oerr', m);
+      err.textContent = '';
+      if (f.name.value.trim().length < 2) { err.textContent = 'Informe o nome'; return; }
+      if (!isValidPhone(f.phone.value)) { err.textContent = 'Telefone inválido'; return; }
       const merged = Object.values(lines.reduce((a, l) => ((a[l.product_id] ||= { product_id: l.product_id, qty: 0 }).qty += l.qty, a), {}));
+      const confirmNow = f.confirm.checked;
+      const btn = f.querySelector('[type=submit]');
+      btn.disabled = true;
       try {
-        const r = await store.placeOrder({ customer_name: f.name.value, phone: f.phone.value, items: merged, channel: f.channel.value, notes: f.notes.value });
+        const r = await store.placeOrder({
+          customer_name: f.name.value.trim(), phone: f.phone.value, items: merged, channel: f.channel.value, notes: f.notes.value.trim(),
+          coupon: f.coupon.value.trim() || null, paid: f.paid.checked,
+          ...(f.delivery?.value === 'ponto' ? { delivery: 'ponto', delivery_date: f.delivery_date.value } : {}),
+        });
         close();
         await loadAll();
         S.orders.forEach((o) => S.seen.add(o.id));
-        render();
-        toast(`Pedido ${r.code} criado`);
-      } catch (ex) { $('#oerr', m).textContent = ex.message; }
+        toast(`Pedido ${r.code} registrado (${money(r.total)})`);
+        const o = S.orders.find((x) => x.code === r.code);
+        // Mesmo caminho do botão Confirmar do quadro: o banco cria o aviso e o bot manda a confirmação.
+        if (confirmNow && o) await setStatus(o.id, 'confirmado');
+        else render();
+      } catch (ex) {
+        btn.disabled = false;
+        err.textContent = ex.message;
+      }
     };
   });
 }
