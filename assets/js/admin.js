@@ -7,8 +7,10 @@ import {
   $, $$, esc, money, pct, margin, fmtDate, fmtDateTime, timeAgo, startOfDay, formatPhone, normalizePhone,
   waLink, toast, maskPhoneInput, isValidPhone,
 } from './utils.js';
+import { couponState, couponLabel, normCode } from './coupons.js';
+import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
 
-const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio' };
+const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], campaigns: [], campaignCfg: {} };
 const VIEWS = {
   inicio: ['Início', viewHome],
   pedidos: ['Pedidos', viewOrders],
@@ -16,6 +18,9 @@ const VIEWS = {
   produtos: ['Produtos', viewProducts],
   financeiro: ['Financeiro', viewFinance],
   novidades: ['Novidades', viewNews],
+  clientes: ['Clientes', viewCustomers],
+  campanhas: ['Campanhas', viewCampaigns],
+  cupons: ['Cupons', viewCoupons],
   bot: ['Bot WhatsApp', viewBot],
   ajustes: ['Ajustes', viewSettings],
 };
@@ -84,7 +89,7 @@ $('#refreshBtn').addEventListener('click', async () => { await loadAll(); render
 $('#newOrderBtn').addEventListener('click', () => orderDialog());
 $('#moreBtn').addEventListener('click', () => {
   openDialog(`<h2>Mais</h2><div class="more-grid">
-    ${['produtos', 'novidades', 'bot', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', bot: 'bot', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
+    ${['produtos', 'novidades', 'clientes', 'campanhas', 'cupons', 'bot', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', campanhas: 'send', cupons: 'tag', bot: 'bot', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
     <a href="./" target="_blank">${icon('ext')} Ver loja</a>
     <button id="mLogout">${icon('logout')} Sair</button></div>`, (m) => {
     $('#mLogout', m).onclick = () => $('#logoutBtn').click();
@@ -93,9 +98,10 @@ $('#moreBtn').addEventListener('click', () => {
 
 async function loadAll() {
   const since = new Date(Date.now() - 400 * 864e5).toISOString();
-  [S.orders, S.products, S.news, S.settings, S.admins] = await Promise.all([
-    store.listOrders({ since }), store.listProducts({ all: true }), store.listNews({ all: true }), store.getSettings(), store.listBotAdmins(),
+  [S.orders, S.products, S.news, S.settings, S.admins, S.coupons] = await Promise.all([
+    store.listOrders({ since }), store.listProducts({ all: true }), store.listNews({ all: true }), store.getSettings(), store.listBotAdmins(), store.listCoupons(),
   ]);
+  S.customers = null;
   updateNewPill();
 }
 
@@ -718,6 +724,72 @@ function viewNews(v, signal) {
   on(v, signal, 'click', '[data-del]', async (b) => { if (!confirm('Excluir esta novidade?')) return; await store.deleteNews(b.dataset.del); S.news = await store.listNews({ all: true }); render(); });
   on(v, signal, 'click', '[data-toggle]', async (b) => { const n = S.news.find((x) => x.id === b.dataset.toggle); await store.saveNews({ id: n.id, published: !n.published }); S.news = await store.listNews({ all: true }); render(); });
 }
+
+/* =================================================================== */
+/* Clientes                                                             */
+/* =================================================================== */
+const CF = { q: '', sort: 'last_order' };
+const CUSTOMER_SORTS = {
+  last_order: ['Último pedido', (a, b) => String(b.last_order).localeCompare(String(a.last_order))],
+  orders: ['Mais pedidos', (a, b) => b.orders - a.orders],
+  spent: ['Mais gasto', (a, b) => b.spent - a.spent],
+};
+
+// Lista de clientes com cache de 1 min (a busca re-renderiza a cada tecla).
+async function customers() {
+  if (!S.customers || Date.now() - S.customersAt > 60e3) {
+    S.customers = await store.listCustomers();
+    S.customersAt = Date.now();
+  }
+  return S.customers;
+}
+
+async function viewCustomers(v, signal) {
+  if (!S.customers) v.innerHTML = '<p class="hint">Carregando clientes…</p>';
+  let all;
+  try { all = await customers(); } catch (e) { v.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  if (signal.aborted) return;
+  const q = CF.q.trim().toLowerCase();
+  const digits = q.replace(/\D/g, '');
+  const list = all.filter((c) => !q || c.name.toLowerCase().includes(q) || (digits && c.phone.includes(digits))).sort(CUSTOMER_SORTS[CF.sort][1]);
+  const since60 = Date.now() - 60 * 864e5;
+  v.innerHTML = `
+    <div class="kpis">
+      ${kpi('Clientes', all.length, 'já compraram', 'users', true)}
+      ${kpi('Voltaram a comprar', all.filter((c) => c.orders >= 2).length, '2 pedidos ou mais', 'heart')}
+      ${kpi('Sumidos', all.filter((c) => new Date(c.last_order).getTime() < since60).length, 'sem pedir há 60 dias ou mais', 'clock')}
+      ${kpi('Sem promoções', all.filter((c) => c.opted_out).length, 'pediram para sair', 'x')}
+    </div>
+    <div class="toolbar">
+      <input class="input" type="search" id="cq" placeholder="Buscar por nome ou telefone" value="${esc(CF.q)}" />
+      <div class="chips" role="group" aria-label="Ordenar">${Object.entries(CUSTOMER_SORTS).map(([k, [l]]) => `<button class="chip" aria-pressed="${CF.sort === k}" data-sort="${k}">${l}</button>`).join('')}</div>
+      <button class="btn btn--sm" id="newCamp">${icon('send')} Nova campanha</button>
+    </div>
+    <section class="panel">
+      <div class="table-wrap"><table class="t">
+        <thead><tr><th>Cliente</th><th>WhatsApp</th><th class="num">Pedidos</th><th class="num">Total gasto</th><th>Último pedido</th><th>Mais compra</th></tr></thead>
+        <tbody>${list.slice(0, 300).map((c) => `<tr>
+          <td><b>${esc(c.name)}</b>${c.opted_out ? ' <span class="ch" title="Pediu para não receber promoções">sem promoções</span>' : ''}</td>
+          <td><a href="${waLink('', c.phone)}" target="_blank" rel="noopener">${formatPhone(c.phone)}</a></td>
+          <td class="num">${c.orders}</td>
+          <td class="num">${money(c.spent)}</td>
+          <td title="${fmtDateTime(c.last_order)}">${timeAgo(c.last_order)}</td>
+          <td>${esc((c.top_products || []).join(', '))}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nenhum cliente encontrado.</td></tr>'}</tbody>
+      </table></div>
+      ${list.length > 300 ? `<p class="hint">Mostrando 300 de ${list.length}. Use a busca para achar alguém.</p>` : ''}
+    </section>`;
+  $('#cq', v).addEventListener('input', (e) => {
+    CF.q = e.target.value;
+    clearTimeout(viewCustomers.t);
+    viewCustomers.t = setTimeout(() => { render(); const i = $('#cq'); i?.focus(); i?.setSelectionRange(i.value.length, i.value.length); }, 250);
+  }, { signal });
+  on(v, signal, 'click', '[data-sort]', (b) => { CF.sort = b.dataset.sort; render(); });
+  $('#newCamp', v).onclick = () => campaignDialog();
+}
+
+function viewCoupons(v) { v.innerHTML = emptyState('Em breve', 'Cupons chegam na próxima etapa.'); }
+function viewCampaigns(v) { v.innerHTML = emptyState('Em breve', 'Campanhas chegam na próxima etapa.'); }
+function campaignDialog() { location.hash = 'campanhas'; }
 
 /* =================================================================== */
 /* Bot WhatsApp                                                         */
