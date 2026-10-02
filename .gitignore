@@ -4,3 +4,4 @@ supabase/.branches/
 .env
 node_modules/
 bot/auth/
+bot/bot.log

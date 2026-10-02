@@ -68,6 +68,7 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 3. Abra `bot/.env` e cole em `SUPABASE_SECRET_KEY` a **Secret key** (Supabase → Project Settings → API Keys). Essa chave dá acesso total ao banco: fica só nesse arquivo, que não vai para o GitHub.
 4. `npm start` → aparece um QR Code. No celular da loja: **WhatsApp → Aparelhos conectados → Conectar um aparelho** → escaneie.
 5. Deixe o terminal aberto. A aba **Bot WhatsApp** do painel mostra se o bot está online.
+6. Para rodar em segundo plano (liga sozinho com o Mac e reinicia se cair): pare o `npm start` com Ctrl+C e rode `./instalar-servico-mac.sh`. Log em `bot/bot.log`; para desinstalar, `./instalar-servico-mac.sh remover`.
 
 - A sessão fica salva em `bot/auth/`; ao reiniciar não pede QR de novo. Para trocar de número, apague essa pasta.
 - Novidades publicadas no painel com o canal **WhatsApp** são enviadas pelo bot em até 1 minuto aos clientes inscritos (opção 4 do menu), com pausa de alguns segundos entre cada envio.
