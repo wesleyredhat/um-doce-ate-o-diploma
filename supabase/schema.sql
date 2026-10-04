@@ -26,6 +26,21 @@ create table if not exists public.products (
   sort int not null default 0,
   created_at timestamptz not null default now()
 );
+-- Receita (ficha técnica): { yield: 25, items: [{ ingredient_id, qty }] }; o custo de 1 unidade vai para cost
+-- (assets/js/recipes.js). Sem receita, cost é digitado à mão. sold_by aparece no site depois do preço ("/caixinha").
+alter table public.products add column if not exists recipe jsonb;
+alter table public.products add column if not exists sold_by text not null default 'un' check (char_length(sold_by) between 1 and 20);
+
+-- Insumos: o que se compra (ingrediente ou embalagem), com o tamanho da embalagem e o preço pago.
+create table if not exists public.ingredients (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(name) between 1 and 80),
+  pack_qty numeric(12, 3) not null check (pack_qty > 0),
+  unit text not null default 'un' check (unit in ('g', 'kg', 'ml', 'l', 'un')),
+  pack_price numeric(10, 2) not null default 0 check (pack_price >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
 
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
@@ -185,6 +200,8 @@ create or replace function public.touch_updated_at() returns trigger language pl
 begin new.updated_at = now(); return new; end $$;
 drop trigger if exists orders_touch on public.orders;
 create trigger orders_touch before update on public.orders for each row execute function public.touch_updated_at();
+drop trigger if exists ingredients_touch on public.ingredients;
+create trigger ingredients_touch before update on public.ingredients for each row execute function public.touch_updated_at();
 
 -- Mesma pessoa com e sem o 9 do celular: o número antigo ganha o 9; fixo fica como está.
 -- Igual a phoneKey (assets/js/coupons.js) e a samePhone (bot-engine.js).
@@ -421,6 +438,7 @@ grant execute on function public.is_admin() to anon, authenticated;
 -- ------------------------------------------------------------------
 alter table public.admins enable row level security;
 alter table public.products enable row level security;
+alter table public.ingredients enable row level security;
 alter table public.orders enable row level security;
 alter table public.news enable row level security;
 alter table public.bot_admins enable row level security;
@@ -441,6 +459,11 @@ drop policy if exists "products public read" on public.products;
 create policy "products public read" on public.products for select using (active or public.is_admin());
 drop policy if exists "products admin write" on public.products;
 create policy "products admin write" on public.products for all using (public.is_admin()) with check (public.is_admin());
+-- O site (anônimo) lê só o que mostra: custo e receita ficam para a loja (shop.js pede estas colunas).
+revoke select on public.products from anon;
+grant select (id, name, category, description, price, image, badge, active, featured, sort, sold_by) on public.products to anon;
+drop policy if exists "ingredients admin" on public.ingredients;
+create policy "ingredients admin" on public.ingredients for all using (public.is_admin()) with check (public.is_admin());
 
 -- Pedidos: ninguém lê nem insere diretamente, exceto admin. Clientes usam place_order().
 drop policy if exists "orders admin" on public.orders;

@@ -260,3 +260,16 @@ table.t { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width:
 .lrow__who .hint { margin: 0; }
 .lrow__stamps { flex: 0 1 150px; font-variant-numeric: tabular-nums; }
 .lrow__act { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+
+/* Receita do produto (ficha técnica) */
+fieldset.recipe { border: 1.5px dashed var(--line); border-radius: 14px; padding: 12px 14px 14px; margin: 0; display: grid; gap: 10px; }
+fieldset.recipe legend { font-weight: 800; color: var(--choc); padding: 0 6px; }
+fieldset.recipe legend small { font-weight: 600; color: var(--ink-soft); }
+.recipe__yield { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--ink-soft); }
+.recipe__yield .input { width: 90px; min-height: 40px; }
+.rline { display: grid; grid-template-columns: 1fr 86px 28px 72px auto; gap: 8px; align-items: center; }
+.rline .input { min-height: 40px; }
+.rline__unit { font-weight: 700; color: var(--ink-soft); }
+.rline__cost { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--choc); }
+@media (max-width: 480px) { .rline { grid-template-columns: 1fr 72px 24px auto; } .rline__cost { display: none; } }
+.pcard__nums small + b + small, .pcard__nums b + small { text-transform: none; font-weight: 600; }

@@ -52,7 +52,13 @@ const write = (k, v) => {
 
 function seedDemo() {
   if (read('seeded', false)) return;
-  const products = SEED_PRODUCTS.map((p, i) => ({ id: uid(), active: true, sort: i, ...p }));
+  const products = SEED_PRODUCTS.map((p, i) => ({ id: uid(), active: true, sort: i, sold_by: 'un', recipe: null, ...p }));
+  // Insumos de exemplo e a receita do brigadeiro: o custo dele sai da receita (assets/js/recipes.js).
+  const ing = (name, pack_qty, unit, pack_price) => ({ id: uid(), name, pack_qty, unit, pack_price });
+  const ingredients = [ing('Leite condensado', 395, 'g', 7), ing('Chocolate 50%', 1, 'kg', 39.99), ing('Granulado', 1, 'kg', 29.99), ing('Forminha', 100, 'un', 8)];
+  Object.assign(products[0], { cost: 0.5, recipe: { yield: 25, items: [[0, 395], [1, 40], [2, 60], [3, 25]].map(([i, qty]) => ({ ingredient_id: ingredients[i].id, qty })) } });
+  products[2].sold_by = 'caixinha';
+  write('ingredients', ingredients);
   const names = ['Ana Clara', 'Bruno', 'Camila', 'Diego', 'Eduarda', 'Felipe', 'Gabriela', 'Henrique', 'Isabela', 'João Pedro',
     'Larissa', 'Marina', 'Natália', 'Otávio', 'Paula', 'Rafael', 'Sofia', 'Thiago', 'Vitória', 'Yasmin'];
   const orders = [];
@@ -145,6 +151,14 @@ const DemoStore = {
     write('products', ps);
   },
   async deleteProduct(id) { write('products', read('products', []).filter((p) => p.id !== id)); },
+  async listIngredients() { return read('ingredients', []).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')); },
+  async saveIngredient(i) {
+    const list = read('ingredients', []);
+    const row = { ...(list.find((x) => x.id === i.id) || { id: uid() }), ...i };
+    write('ingredients', [...list.filter((x) => x.id !== row.id), row]);
+    return row;
+  },
+  async deleteIngredient(id) { write('ingredients', read('ingredients', []).filter((i) => i.id !== id)); },
 
   async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null, paid = false }) {
     const products = read('products', []);
@@ -343,15 +357,24 @@ const SupabaseStore = {
     return data.session?.user ?? null;
   },
 
+  // O site (anônimo) só pode ler estas colunas (custo e receita são da loja); banco ainda sem sold_by: lê sem ele.
   async listProducts({ all = false } = {}) {
-    let q = sb.from('products').select('*').order('sort');
-    if (!all) q = q.eq('active', true);
-    return must(await q);
+    if (all) return must(await sb.from('products').select('*').order('sort'));
+    const cols = 'id, name, category, description, price, image, badge, active, featured, sort';
+    const r = await sb.from('products').select(`${cols}, sold_by`).eq('active', true).order('sort');
+    if (r.error?.code === '42703') return must(await sb.from('products').select(cols).eq('active', true).order('sort'));
+    return must(r);
   },
   async saveProduct(p) {
     must(await (p.id ? sb.from('products').update(p).eq('id', p.id) : sb.from('products').insert(p)));
   },
   async deleteProduct(id) { must(await sb.from('products').delete().eq('id', id)); },
+  async listIngredients() { return must(await sb.from('ingredients').select('*').order('name')); },
+  async saveIngredient(i) {
+    const { id, ...rec } = i;
+    return must(await (id ? sb.from('ingredients').update(rec).eq('id', id) : sb.from('ingredients').insert(rec)).select().single());
+  },
+  async deleteIngredient(id) { must(await sb.from('ingredients').delete().eq('id', id)); },
 
   async placeOrder({ customer_name, phone, items, channel = 'web', notes = '', coupon = null, delivery = 'combinar', delivery_date = null, paid = false }) {
     // Sem cupom e sem entrega no ponto, a chamada é a mesma de antes do schema novo: pedido continua funcionando enquanto o banco não é atualizado.

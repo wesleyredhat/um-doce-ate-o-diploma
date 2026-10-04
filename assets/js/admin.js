@@ -9,6 +9,7 @@ import {
 } from './utils.js';
 import { couponState, couponLabel, normCode, phoneKey } from './coupons.js';
 import { loyaltyOf, capelosText, loyaltyMessage } from './loyalty.js';
+import { UNITS, SOLD_BY, baseUnit, packText, unitPriceText, recipeCost, costsToUpdate, usedIn, hasRecipe } from './recipes.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
 import { WEEKDAYS, dayLabel, deliveryText, spotOf, deliveryDates, COMBINE_LABEL } from '../../supabase/functions/_shared/delivery.js';
 import { PIX_TYPES, orderPix, pixKey, pixKeyType } from '../../supabase/functions/_shared/pix.js';
@@ -21,6 +22,7 @@ const VIEWS = BOT_PAGE ? { bot: ['Bot WhatsApp', viewBot] } : {
   pedidos: ['Pedidos', viewOrders],
   producao: ['Produção', viewProduction],
   produtos: ['Produtos', viewProducts],
+  insumos: ['Insumos', viewIngredients],
   financeiro: ['Financeiro', viewFinance],
   novidades: ['Novidades', viewNews],
   clientes: ['Clientes', viewCustomers],
@@ -103,7 +105,7 @@ $('#newOrderBtn')?.addEventListener('click', () => orderDialog());
 document.addEventListener('click', (e) => { if (e.target.closest('[data-new-order]')) orderDialog(); });
 $('#moreBtn')?.addEventListener('click', () => {
   openDialog(`<h2>Mais</h2><div class="more-grid">
-    ${['produtos', 'novidades', 'clientes', 'fidelidade', 'campanhas', 'cupons', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', novidades: 'news', clientes: 'users', fidelidade: 'heart', campanhas: 'send', cupons: 'tag', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
+    ${['produtos', 'insumos', 'novidades', 'clientes', 'fidelidade', 'campanhas', 'cupons', 'ajustes'].map((v) => `<a href="#${v}" data-close>${icon({ produtos: 'box', insumos: 'basket', novidades: 'news', clientes: 'users', fidelidade: 'heart', campanhas: 'send', cupons: 'tag', ajustes: 'gear' }[v])} ${VIEWS[v][0]}</a>`).join('')}
     <button data-new-order data-close>${icon('plus')} Registrar pedido</button>
     <a href="./" target="_blank">${icon('ext')} Ver loja</a>
     <button id="mLogout">${icon('logout')} Sair</button></div>`, (m) => {
@@ -113,9 +115,10 @@ $('#moreBtn')?.addEventListener('click', () => {
 
 async function loadAll() {
   const since = new Date(Date.now() - 400 * 864e5).toISOString();
-  [S.orders, S.products, S.news, S.settings, S.admins, S.coupons] = await Promise.all([
+  [S.orders, S.products, S.news, S.settings, S.admins, S.coupons, S.ingredients] = await Promise.all([
     store.listOrders({ since }), store.listProducts({ all: true }), store.listNews({ all: true }), store.getSettings(), store.listBotAdmins(),
     store.listCoupons().then((list) => { S.couponsError = ''; return list; }, (e) => { S.couponsError = dbError(e); return []; }),
+    store.listIngredients().then((list) => { S.ingredientsError = ''; return list; }, (e) => { S.ingredientsError = dbError(e); return []; }),
   ]);
   S.customers = null;
   updateNewPill();
@@ -592,7 +595,7 @@ function viewProduction(v) {
 /* =================================================================== */
 function viewProducts(v, signal) {
   v.innerHTML = `
-    <div class="toolbar"><p class="hint" style="margin:0;flex:1">A margem considera preço de venda e custo unitário (insumos + embalagem). Estrela = destaque no carrossel.</p>
+    <div class="toolbar"><p class="hint" style="margin:0;flex:1">Margem = o que sobra do que a cliente paga, depois do custo para fazer. Com a receita montada (insumos da aba Insumos), o custo se atualiza sozinho. Estrela = destaque no carrossel.</p>
       <button class="btn" id="addP">${icon('plus')} Novo produto</button></div>
     <div class="pgrid">${S.products.map((p) => {
       const m = margin(p.price, p.cost);
@@ -600,7 +603,7 @@ function viewProducts(v, signal) {
         <img class="pcard__img" src="${esc(p.image || 'assets/img/logo.png')}" alt="" loading="lazy" />
         <div class="pcard__body">
           <h3>${esc(p.name)} ${p.badge ? `<span class="badge">${esc(p.badge)}</span>` : ''}</h3>
-          <div class="pcard__nums"><div><small>Preço</small><b>${money(p.price)}</b></div><div><small>Custo</small><b>${money(p.cost)}</b></div><div><small>Margem</small><b class="marg marg--${marginClass(m)}">${pct(m)}</b></div></div>
+          <div class="pcard__nums"><div><small>Cliente paga</small><b>${money(p.price)}</b><small>por ${esc(p.sold_by || 'un')}</small></div><div><small>Custa fazer</small><b>${money(p.cost)}</b><small>${hasRecipe(p) ? '🧾 pela receita' : 'digitado'}</small></div><div><small>Margem</small><b class="marg marg--${marginClass(m)}">${pct(m)}</b></div></div>
           <div class="pcard__actions">
             <label class="switch" title="Visível na loja"><input type="checkbox" data-act="${p.id}" ${p.active ? 'checked' : ''}/><i></i></label>
             <button class="icon-btn star ${p.featured ? 'on' : ''}" data-feat="${p.id}" title="Destaque" aria-label="Destaque"><svg class="i" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3Z"/></svg></button>
@@ -631,7 +634,12 @@ function resizeImage(file, max = 900) {
   });
 }
 
-function productDialog(p = { name: '', category: 'doces', description: '', price: '', cost: '', image: '', badge: '', active: true, featured: false }) {
+// Produto: o que a cliente paga, como é vendido e quanto custa fazer 1. Com receita (insumos da aba Insumos e quanto
+// rende a fornada), o custo é calculado (recipes.js); sem receita, é digitado.
+function productDialog(p = { name: '', category: 'doces', description: '', price: '', cost: '', image: '', badge: '', active: true, featured: false, sold_by: 'un', recipe: null }) {
+  const ings = S.ingredients || [];
+  const lines = (p.recipe?.items || []).map((it) => ({ ...it }));
+  const ingOptions = (sel) => `<option value="">Escolha o insumo</option>${ings.map((i) => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${esc(i.name)} (${packText(i)})</option>`).join('')}`;
   openDialog(`<h2>${p.id ? 'Editar produto' : 'Novo produto'}</h2>
     <form class="form" id="pf">
       <div class="img-pick"><img id="pimg" src="${esc(p.image || 'assets/img/logo.png')}" alt="" />
@@ -643,10 +651,17 @@ function productDialog(p = { name: '', category: 'doces', description: '', price
       </div>
       <label class="field"><span>Descrição</span><textarea class="textarea" name="description" maxlength="220">${esc(p.description)}</textarea></label>
       <div class="row3">
-        <label class="field"><span>Preço de venda</span><input class="input" name="price" type="number" step="0.01" min="0" required value="${p.price}" /></label>
-        <label class="field"><span>Custo unitário</span><input class="input" name="cost" type="number" step="0.01" min="0" required value="${p.cost}" /></label>
+        <label class="field"><span>A cliente paga</span><input class="input" name="price" type="number" step="0.01" min="0" required value="${p.price}" /></label>
+        <label class="field"><span>Vendido por</span><input class="input" name="sold_by" list="soldBy" maxlength="20" value="${esc(p.sold_by || 'un')}" /><datalist id="soldBy">${SOLD_BY.map((u) => `<option value="${u}">`).join('')}</datalist></label>
         <label class="field"><span>Selo</span><input class="input" name="badge" maxlength="18" placeholder="Ex.: Novidade" value="${esc(p.badge)}" /></label>
       </div>
+      <fieldset class="recipe"><legend>Receita <small>(quanto vai numa fornada)</small></legend>
+        ${ings.length ? `<label class="recipe__yield"><span>A fornada rende</span><input class="input" name="yield" type="number" min="1" step="1" value="${p.recipe?.yield || 1}" /><b id="ryunit">${esc(p.sold_by || 'un')}</b></label>
+        <div id="rlines" class="form"></div>
+        <button type="button" class="btn btn--soft btn--sm" id="radd" style="justify-self:start">${icon('plus')} Insumo</button>`
+        : `<p class="hint" style="margin:0">Cadastre os ingredientes e embalagens na aba <a href="#insumos" data-close>Insumos</a> para o custo sair da receita.${S.ingredientsError ? ` (${esc(S.ingredientsError)})` : ''}</p>`}
+      </fieldset>
+      <label class="field" id="mcost"><span>Custa para fazer 1 <small>(sem receita, digite aqui)</small></span><input class="input" name="cost" type="number" step="0.01" min="0" value="${p.cost}" /></label>
       <div class="preview-box" id="pprev"></div>
       <p class="hint" id="psug"></p>
       <div class="form__actions">
@@ -656,17 +671,50 @@ function productDialog(p = { name: '', category: 'doces', description: '', price
     </form>`, (m, close) => {
     const f = $('#pf', m);
     let dataImg = p.image?.startsWith('data:') ? p.image : '';
+    const recipe = () => ({ yield: Math.max(1, parseInt(f.yield?.value, 10) || 1), items: lines.filter((l) => l.ingredient_id && Number(l.qty) > 0).map((l) => ({ ingredient_id: l.ingredient_id, qty: Number(l.qty) })) });
+    const cost = () => (recipe().items.length ? recipeCost(recipe(), ings) : null);
+    const drawLines = () => {
+      if (!$('#rlines', m)) return;
+      $('#rlines', m).innerHTML = lines.map((l, i) => {
+        const ing = ings.find((x) => x.id === l.ingredient_id);
+        return `<div class="rline"><select class="select" data-ri="${i}" aria-label="Insumo">${ingOptions(l.ingredient_id)}</select>
+          <input class="input" type="number" min="0" step="any" data-rq="${i}" value="${l.qty ?? ''}" aria-label="Quanto vai na fornada" placeholder="Qtd." />
+          <span class="rline__unit">${ing ? baseUnit(ing) : ''}</span><span class="rline__cost" data-rc="${i}"></span>
+          <button type="button" class="icon-btn" data-rr="${i}" aria-label="Tirar da receita">${icon('trash')}</button></div>`;
+      }).join('');
+    };
     const prev = () => {
       const price = +f.price.value || 0;
-      const cost = +f.cost.value || 0;
-      const mg = margin(price, cost);
-      $('#pprev', m).innerHTML = `<div><small>Lucro / un</small><b>${money(price - cost)}</b></div><div><small>Margem</small><b class="marg marg--${marginClass(mg)}">${pct(mg)}</b></div><div><small>Markup</small><b>${cost ? (price / cost).toFixed(2).replace('.', ',') + 'x' : 'sem custo'}</b></div>`;
-      const sug = cost ? Math.ceil((cost / (1 - 0.6)) * 2) / 2 : 0;
-      $('#psug', m).innerHTML = cost ? `💡 Para 60% de margem, o preço sugerido é <b>${money(sug)}</b>. <button type="button" class="chip" id="usesug">Usar</button>` : '';
+      const rc = cost();
+      $('#mcost', m).hidden = !!rc;
+      const c = rc ? rc.unit : +f.cost.value || 0;
+      lines.forEach((l, i) => {
+        const el = $(`[data-rc="${i}"]`, m);
+        const ing = ings.find((x) => x.id === l.ingredient_id);
+        if (el) el.textContent = ing && Number(l.qty) > 0 ? money(recipeCost({ yield: 1, items: [l] }, ings).batch) : '';
+      });
+      if ($('#ryunit', m)) $('#ryunit', m).textContent = f.sold_by.value.trim() || 'un';
+      const mg = margin(price, c);
+      $('#pprev', m).innerHTML = `<div><small>Custa fazer 1</small><b>${money(c)}</b>${rc ? `<small>fornada ${money(rc.batch)} ÷ ${recipe().yield}</small>` : ''}</div>
+        <div><small>Lucro por ${esc(f.sold_by.value.trim() || 'un')}</small><b>${money(price - c)}</b></div><div><small>Margem</small><b class="marg marg--${marginClass(mg)}">${pct(mg)}</b></div>`;
+      const sug = c ? Math.ceil((c / (1 - 0.6)) * 2) / 2 : 0;
+      $('#psug', m).innerHTML = c ? `💡 Para 60% de margem, a cliente pagaria <b>${money(sug)}</b>. <button type="button" class="chip" id="usesug">Usar</button>` : '';
       $('#usesug', m)?.addEventListener('click', () => { f.price.value = sug.toFixed(2); prev(); });
     };
+    drawLines();
     prev();
-    f.addEventListener('input', prev);
+    f.addEventListener('input', (e) => {
+      if (e.target.dataset.rq) lines[+e.target.dataset.rq].qty = e.target.value;
+      prev();
+    });
+    f.addEventListener('change', (e) => {
+      if (e.target.dataset.ri) { lines[+e.target.dataset.ri].ingredient_id = e.target.value; drawLines(); prev(); }
+    });
+    f.addEventListener('click', (e) => {
+      const r = e.target.closest('[data-rr]');
+      if (r) { lines.splice(+r.dataset.rr, 1); drawLines(); prev(); }
+    });
+    $('#radd', m)?.addEventListener('click', () => { lines.push({ ingredient_id: '', qty: '' }); drawLines(); prev(); });
     f.image.addEventListener('input', () => { dataImg = ''; $('#pimg', m).src = f.image.value || 'assets/img/logo.png'; });
     $('#pfile', m).onchange = async (e) => { const file = e.target.files[0]; if (!file) return; dataImg = await resizeImage(file); $('#pimg', m).src = dataImg; f.image.value = ''; };
     $('#pdel', m)?.addEventListener('click', async () => {
@@ -677,13 +725,87 @@ function productDialog(p = { name: '', category: 'doces', description: '', price
     });
     f.onsubmit = async (e) => {
       e.preventDefault();
+      const rc = cost();
       const rec = { ...(p.id ? { id: p.id } : {}), name: f.name.value.trim(), category: f.category.value, description: f.description.value.trim(),
-        price: +f.price.value, cost: +f.cost.value, badge: f.badge.value.trim(), image: dataImg || f.image.value.trim() || p.image || '' };
+        price: +f.price.value, sold_by: f.sold_by.value.trim() || 'un', badge: f.badge.value.trim(), image: dataImg || f.image.value.trim() || p.image || '',
+        cost: rc ? rc.unit : +f.cost.value || 0, ...(ings.length ? { recipe: rc ? recipe() : null } : {}) };
       try {
         await store.saveProduct(rec);
         S.products = await store.listProducts({ all: true });
         close(); render(); toast('Produto salvo ♡');
-      } catch (ex) { toast(ex.message, 'err'); }
+      } catch (ex) { toast(dbError(ex), 'err'); }
+    };
+  });
+}
+
+/* =================================================================== */
+/* Insumos                                                              */
+/* =================================================================== */
+// Ingredientes e embalagens que se compram. Mudou o preço: o custo dos produtos que usam o insumo na receita muda junto.
+function viewIngredients(v, signal) {
+  if (S.ingredientsError) { v.innerHTML = `<p class="err">${esc(S.ingredientsError)}</p>`; return; }
+  v.innerHTML = `
+    <div class="toolbar"><p class="hint" style="margin:0;flex:1">Tudo o que você compra para fazer os produtos (ingredientes e embalagens), com o tamanho da embalagem e o preço pago. Mudou o preço? Atualize aqui e o custo dos produtos que usam o insumo muda junto.</p>
+      <button class="btn" id="addIng">${icon('plus')} Novo insumo</button></div>
+    <section class="panel"><div class="table-wrap"><table class="t">
+      <thead><tr><th>Insumo</th><th>Embalagem</th><th class="num">Preço pago</th><th class="num">Custo</th><th>Usado em</th><th></th></tr></thead>
+      <tbody>${S.ingredients.map((i) => {
+        const used = usedIn(S.products, i.id);
+        return `<tr><td><b>${esc(i.name)}</b>${Number(i.pack_price) ? '' : ' <span class="ch" style="background:var(--berry-soft);color:#9a3f35">sem preço</span>'}</td>
+          <td>${packText(i)}</td><td class="num">${money(i.pack_price)}</td><td class="num">${unitPriceText(i)}</td>
+          <td>${used.map((p) => esc(p.name)).join(', ') || '<span class="hint">nenhuma receita</span>'}</td>
+          <td class="num"><button class="icon-btn" data-ing="${i.id}" aria-label="Editar ${esc(i.name)}">${icon('edit')}</button></td></tr>`;
+      }).join('') || '<tr><td colspan="6" class="empty">Nenhum insumo ainda. Comece pelos que você mais usa: leite condensado, chocolate, embalagens.</td></tr>'}</tbody>
+    </table></div></section>`;
+  $('#addIng', v).onclick = () => ingredientDialog();
+  on(v, signal, 'click', '[data-ing]', (b) => ingredientDialog(S.ingredients.find((i) => i.id === b.dataset.ing)));
+}
+
+function ingredientDialog(ing = { name: '', pack_qty: '', unit: 'g', pack_price: '' }) {
+  const used = ing.id ? usedIn(S.products, ing.id) : [];
+  openDialog(`<h2>${ing.id ? 'Editar insumo' : 'Novo insumo'}</h2>
+    <form class="form" id="ingf">
+      <label class="field"><span>Nome</span><input class="input" name="name" required maxlength="80" placeholder="Ex.: Leite condensado" value="${esc(ing.name)}" /></label>
+      <div class="row3">
+        <label class="field"><span>Tamanho da embalagem</span><input class="input" name="pack_qty" type="number" min="0.001" step="any" required placeholder="Ex.: 395" value="${ing.pack_qty}" /></label>
+        <label class="field"><span>Unidade</span><select class="select" name="unit">${Object.keys(UNITS).map((u) => `<option value="${u}" ${u === ing.unit ? 'selected' : ''}>${u === 'un' ? 'unidades' : u}</option>`).join('')}</select></label>
+        <label class="field"><span>Preço pago</span><input class="input" name="pack_price" type="number" min="0" step="0.01" required placeholder="Ex.: 7,00" value="${ing.pack_price}" /></label>
+      </div>
+      <p class="hint" id="iprev"></p>
+      ${used.length ? `<p class="hint">Usado na receita de: ${used.map((p) => `<b>${esc(p.name)}</b>`).join(', ')}.</p>` : ''}
+      <p class="err" id="ierr"></p>
+      <div class="form__actions">
+        ${ing.id ? `<button type="button" class="btn btn--ghost" id="idel" style="margin-right:auto">${icon('trash')} Excluir</button>` : ''}
+        <button type="button" class="btn btn--ghost" data-close>Cancelar</button><button class="btn" type="submit">Salvar</button>
+      </div>
+    </form>`, (m, close) => {
+    const f = $('#ingf', m);
+    const draft = () => ({ name: f.name.value.trim(), pack_qty: +f.pack_qty.value, unit: f.unit.value, pack_price: +f.pack_price.value || 0 });
+    const prev = () => { const d = draft(); $('#iprev', m).textContent = d.pack_qty > 0 ? `Custo: ${unitPriceText(d)}.` : ''; };
+    prev();
+    f.addEventListener('input', prev);
+    $('#idel', m)?.addEventListener('click', async () => {
+      if (used.length) { $('#ierr', m).textContent = `Tire "${ing.name}" das receitas de ${used.map((p) => p.name).join(', ')} antes de excluir.`; return; }
+      if (!confirm(`Excluir "${ing.name}"?`)) return;
+      await store.deleteIngredient(ing.id);
+      S.ingredients = await store.listIngredients();
+      close(); render(); toast('Insumo excluído');
+    });
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const d = draft();
+      if (!(d.pack_qty > 0)) { $('#ierr', m).textContent = 'Informe o tamanho da embalagem.'; return; }
+      // As receitas guardam a quantidade em g, ml ou unidades: trocar de família muda a conta delas.
+      if (used.length && baseUnit(d) !== baseUnit(ing) && !confirm(`As receitas usam ${ing.name} em ${baseUnit(ing)}. Mudar para ${baseUnit(d)} muda a conta delas. Continuar?`)) return;
+      try {
+        const row = await store.saveIngredient({ ...(ing.id ? { id: ing.id } : {}), ...d });
+        S.ingredients = await store.listIngredients();
+        const updates = costsToUpdate(S.products, S.ingredients, row.id);
+        for (const u of updates) await store.saveProduct({ id: u.id, cost: u.cost });
+        if (updates.length) S.products = await store.listProducts({ all: true });
+        close(); render();
+        toast(updates.length ? `Insumo salvo. Custo atualizado: ${updates.map((u) => `${u.name} ${money(u.old)} → ${money(u.cost)}`).join(' · ')}` : 'Insumo salvo');
+      } catch (ex) { $('#ierr', m).textContent = dbError(ex); }
     };
   });
 }
@@ -1437,7 +1559,7 @@ function viewSettings(v, signal) {
           <div class="form__actions"><button class="btn" type="submit">Salvar entrega</button></div>
         </form>
       </section>
-      <section class="panel"><div class="panel__head"><div><h2>Custos fixos mensais</h2><p>Usados no lucro líquido estimado</p></div></div>
+      <section class="panel"><div class="panel__head"><div><h2>Custos fixos mensais</h2><p>Só o que você paga todo mês mesmo sem vender: gás e energia, MEI (DAS), celular e internet, transporte. Ingredientes e embalagens vão em <a href="#insumos">Insumos</a>. Usados no lucro líquido estimado.</p></div></div>
         <form class="form" id="ff">
           <div id="fixed" class="form">${fixed.map((c, i) => `<div class="mline"><input class="input" name="n${i}" value="${esc(c.name)}" aria-label="Descrição" /><input class="input" name="v${i}" type="number" step="0.01" value="${c.value}" style="width:120px" aria-label="Valor" /><span></span></div>`).join('')}</div>
           <button type="button" class="btn btn--soft btn--sm" id="addFixed" style="justify-self:start">${icon('plus')} Custo</button>

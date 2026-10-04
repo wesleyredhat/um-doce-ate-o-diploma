@@ -98,6 +98,7 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 2. **Início**: saudação, KPIs do dia contra ontem, faturamento de 14 dias, canais, mais vendidos, pedidos em aberto.
 3. **Pedidos**: quadro Novo → Confirmado → Em produção → Pronto → Entregue (arrastar ou botão de avançar). Busca, filtro por canal, botão de WhatsApp com **mensagem pronta para cada status** (confirmação com Pix, “está no forno”, “prontinho”, agradecimento com contagem da carteirinha). Atualiza a cada 30 s, também com a aba em segundo plano, com aviso sonoro e contador na aba do navegador. Enquanto o navegador não libera o som (painel aberto já logado, sem clique), aparece o botão **Ativar som**.
 4. **Produção**: soma de unidades por produto dos pedidos não prontos, com detalhamento por pedido e impressão.
+4.1. **Produtos e insumos**: insumos com embalagem (g, kg, ml, l, un) e preço pago; no produto, "A cliente paga", "Vendido por" e a receita (insumos por fornada e rendimento). O custo de 1 unidade é calculado (`assets/js/recipes.js`) e recalculado quando o preço de um insumo muda; sem receita, é digitado. Prévia com lucro por unidade, margem e preço para 60% de margem.
 5. **Registrar pedido** (topo do painel, quadro de pedidos e "Mais" no celular): pedido feito pessoalmente, por telefone ou no Instagram, com os mesmos dados do site (produtos, WhatsApp, entrega, cupom, observação). "Já pago" (dinheiro ou Pix na hora) faz a confirmação sair sem cobrança; "Já confirmar" confirma na hora e a cliente recebe a confirmação pelo WhatsApp, seguindo o fluxo digital.
 6. **Clientes**: quem já comprou, agrupado por telefone (com e sem o 9 é a mesma pessoa), com pedidos, total gasto, último pedido e produtos favoritos.
 7. **Cupons**: % ou R$, pedido mínimo, vigência por data, cota de usos, uma vez por WhatsApp; mostra usos, vendas e desconto dado.
@@ -108,7 +109,9 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 ## 3. Estrutura de dados
 
 ```sql
-products    (id, name, category[doces|salgados], description, price, cost, image, badge, active, featured, sort)
+products    (id, name, category[doces|salgados], description, price, cost, image, badge, active, featured, sort, sold_by, recipe jsonb)
+             recipe = {yield, items: [{ingredient_id, qty}]} (qty em g, ml ou un) · o site (anon) lê só as colunas públicas, sem cost nem recipe
+ingredients (id, name, pack_qty, unit[g|kg|ml|l|un], pack_price, created_at, updated_at)   ← insumos, só admin
 orders      (id, code, customer_name, phone, items jsonb, total, cost_total, channel[web|whatsapp|grupo|balcao],
              status[novo|confirmado|producao|pronto|entregue|cancelado], notes, created_at, updated_at)
              items = [{product_id, name, qty, unit_price, unit_cost}]   ← cópia no momento da venda

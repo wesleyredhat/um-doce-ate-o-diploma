@@ -6,7 +6,7 @@ Roda 100% estático no **GitHub Pages**; dados e login ficam no **Supabase** (pl
 | | |
 |---|---|
 | Loja | `index.html`: carrossel de destaques, cardápio, pedido simplificado (nome, WhatsApp, produto, quantidade), novidades, Carteirinha do Formando |
-| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, financeiro, novidades, clientes, campanhas, cupons, ajustes |
+| Painel | `admin.html`: login, quadro de pedidos (arrastar e soltar), lista de produção, produtos com margem, insumos e receitas (custo calculado), financeiro, novidades, clientes, campanhas, cupons, ajustes |
 | Bot (página) | `bot/index.html`, em `/bot/`: conexão do WhatsApp (QR Code ou código), números autorizados e simulador, fora do painel |
 | Bot | `bot/`: WhatsApp comum conectado por QR Code; motor em `supabase/functions/_shared/bot-engine.js` (o mesmo usado pelo simulador do painel) |
 | Banco | `supabase/schema.sql`: tabelas, RLS e funções `place_order` / `check_coupon` / `loyalty_stamps` |
@@ -77,6 +77,7 @@ Funciona com o WhatsApp normal (não precisa de conta Business nem da API da Met
 - Só mensagens identificadas como encomenda: `menu`, `cardápio` ou `#pedido` (a mensagem inteira, como "me manda o cardápio"), os botões do site ("Vim pelo site…", "Acabei de fazer o pedido DD-XXXX", "Quero receber as novidades") ou o pedido escrito: verbo de pedido perto do produto ("quero 10 brigadeiros"), pergunta de preço ("quanto custa o brigadeiro?") ou mensagem curta que começa pela quantidade ("10 brigadeiros"). Conversas pessoais ficam sem resposta automática, mesmo citando doces ("comi 2 brigadeiros da festa", "comprei caixinhas de leite").
 - Palavras comuns do nome de um produto só contam junto do resto do nome: "caixinha de docinhos", "morango cravejado".
 - Cupom: "cupom VOLTA10" chama o bot quando o cupom existe; no meio de uma conversa vale mandar só o código. Cupom que não existe numa conversa pessoal ("usei o cupom IFOOD10") fica sem resposta.
+- **Produtos, insumos e receitas** (painel): em **Insumos**, o que se compra (ingrediente ou embalagem) com o tamanho da embalagem e o preço pago. No produto, "A cliente paga", "Vendido por" (un, caixinha, cento… aparece no site como "/caixinha") e a **receita**: quanto de cada insumo vai numa fornada e quanto ela rende. O custo de 1 unidade sai da receita e se atualiza quando o preço de um insumo muda; sem receita, é digitado. Custos fixos (Ajustes) são só o que se paga todo mês mesmo sem vender. O site não lê custo nem receita. Regras em `assets/js/recipes.js`.
 - **Registrar pedido** (painel): para quem pediu pessoalmente ou por telefone, com produtos, WhatsApp, entrega, cupom e observação. "Já pago" faz a confirmação sair sem cobrar o Pix; "Já confirmar" manda a confirmação na hora, e o pedido segue o fluxo digital (pronto e agradecimento pelo WhatsApp).
 - **Forma de entrega** (site e bot, antes de fechar o pedido): "Como prefere receber?" com a entrega de dia marcado de Ajustes (padrão: "Na faculdade", terça, quarta e sexta) e as próximas 4 datas a partir de amanhã, ou "Outro local ou retirada (combinamos pelo WhatsApp)". O banco confere o dia de novo; o cartão do pedido no painel mostra 📍 com o dia. Sem dias marcados em Ajustes, a pergunta some.
 - **Avisos do pedido** (automáticos, pela esteira do painel): ao **Confirmar**, o bot manda a confirmação com os itens, o total e a entrega, e, numa segunda mensagem, só o **Pix Copia e Cola** já com o valor (Ajustes → Chave Pix e tipo da chave; a chave também vai legível no texto), pedindo o comprovante; ao chegar em **Pronto**, avisa que está disponível para entrega, com o lugar e o dia escolhidos ou a observação do pedido, se houver; ao marcar **Entregue**, agradece e conta os capelos da Carteirinha do Formando.
@@ -96,7 +97,7 @@ A alternativa oficial (WhatsApp Business Cloud API, paga por conversa) continua 
 
 ## 5. Clientes, campanhas e cupons
 
-Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode os testes `supabase/tests/cupons.sql`, `avisos.sql`, `entrega.sql` e `fidelidade.sql`, que conferem as regras do cupom, dos avisos, da entrega e da carteirinha direto no banco: todos precisam terminar sem erro e desfazem tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
+Ao atualizar o código, rode de novo o `supabase/schema.sql` inteiro no **SQL Editor** (pode rodar quantas vezes quiser). Depois rode os testes `supabase/tests/cupons.sql`, `avisos.sql`, `entrega.sql`, `fidelidade.sql` e `produtos.sql`, que conferem as regras do cupom, dos avisos, da entrega, da carteirinha e dos produtos direto no banco: todos precisam terminar sem erro e desfazem tudo no final. Por fim, reinicie o bot com `./instalar-servico-mac.sh`. Enquanto o banco não for atualizado, a loja e o bot continuam recebendo pedidos sem cupom, e as abas novas do painel avisam o que falta.
 
 - **Clientes** (painel): todo mundo que já comprou, agrupado pelo WhatsApp (com e sem o 9 é a mesma pessoa), com número de pedidos, capelos da carteirinha, total gasto, último pedido e o que mais compra.
 - **Fidelidade** (painel): Carteirinha do Formando (cada pedido entregue vale 1 capelo; a cada 10, o brinde de `LOYALTY_REWARD`). Lista quem tem **brinde a entregar** (com "Entreguei o brinde") e quem está **quase lá** (faltam 3 ou menos), com mensagem pronta no WhatsApp. O cartão do pedido de quem tem brinde mostra 🎁, e ao marcar Entregue o painel pergunta se o brinde foi junto.
@@ -111,7 +112,7 @@ index.html  admin.html  manifest.webmanifest  favicon.png  .nojekyll
 assets/
   css/  base.css (tokens da paleta)  shop.css  admin.css
   js/   config.js  store.js (demo | supabase)  shop.js  admin.js  charts.js  icons.js  utils.js
-        coupons.js (regras do cupom)  campaigns.js (público, texto e ritmo das campanhas)  loyalty.js (carteirinha)
+        coupons.js (regras do cupom)  campaigns.js (público, texto e ritmo das campanhas)  loyalty.js (carteirinha)  recipes.js (insumos e receitas)
   img/  fotos dos produtos e logo (recortadas da arte da cliente)
 bot/
   index.js (WhatsApp por QR Code)  core.js (quando o bot fala)  sender.js (envio das campanhas)
@@ -122,6 +123,7 @@ supabase/
   tests/avisos.sql                    testes dos avisos do pedido (Pix, pronto)
   tests/entrega.sql                   testes da forma de entrega no place_order
   tests/fidelidade.sql                testes da Carteirinha do Formando
+  tests/produtos.sql                  testes de produtos e insumos (custo fora do site)
   functions/_shared/delivery.js       forma de entrega (site, bot e painel)
   functions/_shared/pix.js            Pix Copia e Cola (BR Code)
   functions/_shared/bot-engine.js     motor de conversa (navegador + Deno)

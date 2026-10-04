@@ -139,7 +139,7 @@ function renderGrid(cat) {
         <h3>${esc(p.name)}</h3>
         <p>${esc(p.description)}</p>
         <div class="card__foot">
-          <span class="price">${money(p.price)} <small>/un</small></span>
+          <span class="price">${money(p.price)} <small>/${esc(p.sold_by || 'un')}</small></span>
           ${line
             ? `<div class="stepper" aria-label="Quantidade de ${esc(p.name)}">
                  <button type="button" data-dec="${p.id}" aria-label="Menos">−</button>
