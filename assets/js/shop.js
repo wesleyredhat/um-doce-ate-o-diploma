@@ -3,7 +3,7 @@ import { store, ready } from './store.js';
 import { icon, hydrateIcons } from './icons.js';
 import { $, $$, esc, money, fmtDate, waLink, maskPhoneInput, isValidPhone, toast } from './utils.js';
 import { isCouponError, normCode } from './coupons.js';
-import { spotOf, deliveryDates, dayLabel, deliveryText } from '../../supabase/functions/_shared/delivery.js';
+import { spotOf, deliveryDates, leadOf, dayLabel, deliveryText } from '../../supabase/functions/_shared/delivery.js';
 
 const CART_KEY = 'um-doce-ate-o-diploma:cart';
 const ME_KEY = 'um-doce-ate-o-diploma:me';
@@ -138,6 +138,7 @@ function renderGrid(cat) {
       <div class="card__body">
         <h3>${esc(p.name)}</h3>
         <p>${esc(p.description)}</p>
+        ${Number(p.lead_days) > 1 ? `<small class="lead-note">⏰ Encomenda com ${Number(p.lead_days)} dias de antecedência</small>` : ''}
         <div class="card__foot">
           <span class="price">${money(p.price)} <small>/${esc(p.sold_by || 'un')}</small></span>
           ${line
@@ -244,6 +245,7 @@ function renderLines() {
   paintCoupon(); // também atualiza os totais
   updateMbar();
   $('#addLine').hidden = cart.length >= products.length;
+  renderDelivery({ keep: true }); // as datas dependem da antecedência dos produtos do carrinho
 }
 
 $('#lines').addEventListener('click', (e) => {
@@ -442,16 +444,22 @@ $('#doneClose').addEventListener('click', () => $('#doneDialog').close());
 
 /* ---------- entrega ---------- */
 // "Como prefere receber?" só aparece com entrega de dia marcado em Ajustes (delivery.js); sem isso, é "combinar".
-function renderDelivery() {
-  const spot = spotOf(settings);
-  const dates = deliveryDates(settings);
+// As datas começam depois da maior antecedência do carrinho (morango cravejado: 2 dias). keep: o carrinho mudou,
+// mantém o que já foi escolhido (o dia some se deixou de valer).
+function renderDelivery({ keep = false } = {}) {
   const box = $('#deliveryBox');
+  const spot = spotOf(settings);
+  const lead = leadOf(cart, products);
+  const dates = deliveryDates(settings, Date.now(), 4, lead);
+  const was = keep ? chosenDelivery() || {} : {};
   box.hidden = !spot || !dates.length;
   if (box.hidden) return;
   $('#spotLabel').textContent = spot.label;
-  $$('[name="delivery"]', box).forEach((i) => { i.checked = false; });
-  $('#deliveryDays').hidden = true;
-  $('#deliveryDays').innerHTML = dates.map((d) => `<label class="dday"><input type="radio" name="delivery_date" value="${d}" /><span>${dayLabel(d)}</span></label>`).join('');
+  $$('[name="delivery"]', box).forEach((i) => { i.checked = i.value === was.delivery; });
+  $('#deliveryDays').hidden = was.delivery !== 'ponto';
+  $('#deliveryDays').innerHTML = dates.map((d) => `<label class="dday"><input type="radio" name="delivery_date" value="${d}" ${d === was.delivery_date ? 'checked' : ''} /><span>${dayLabel(d)}</span></label>`).join('');
+  $('#deliveryLead').hidden = lead <= 1;
+  $('#deliveryLead').textContent = lead > 1 ? `Seu pedido tem doces que pedem ${lead} dias de antecedência: as datas já contam com isso.` : '';
 }
 
 // {} sem a pergunta na tela; null se ainda não escolheu.

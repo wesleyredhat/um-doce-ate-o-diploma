@@ -9,7 +9,7 @@ const PRODUCTS = [
   { id: 'p1', name: 'Brigadeiro', category: 'doces', price: 4, cost: 1.35, active: true },
   { id: 'p2', name: 'Casadinho', category: 'doces', price: 4, cost: 1.5, active: true },
   { id: 'p3', name: 'Caixinha 4 docinhos', category: 'doces', price: 15, cost: 5.9, active: true },
-  { id: 'p4', name: 'Morango Cravejado', category: 'doces', price: 12, cost: 4.6, active: true },
+  { id: 'p4', name: 'Morango Cravejado', category: 'doces', price: 12, cost: 4.6, active: true, lead_days: 2 },
   { id: 'p5', name: 'Empadinha de Frango com Catupiry', category: 'salgados', price: 8, cost: 3.1, active: true },
 ];
 const ANA = '5511988887777';
@@ -601,4 +601,19 @@ test('entrega: adicionar mais itens depois não pergunta de novo', async () => {
   assert.match((await say('Ana'))[0], /📍 Entrega: Outro local[\s\S]*Confirmar/);
   await say('1');
   assert.equal(orders.length, 1);
+});
+
+test('antecedência: morango cravejado (2 dias) empurra as datas e aparece no cardápio', async () => {
+  const store = { delivery_spot: { label: 'Na faculdade', days: [1, 2, 3, 4, 5, 6] } }; // sexta, 9h: amanhã é sábado
+  const a = setup({ store });
+  await a.say('quero 10 brigadeiros'); await a.say('Ana');
+  assert.match((await a.say('1'))[0], /\*1\* - sábado, 03\/10/, 'só brigadeiro (1 dia): já dá amanhã');
+  const b = setup({ store });
+  await b.say('quero 2 morangos cravejados'); await b.say('Ana');
+  const days = (await b.say('1'))[0];
+  assert.match(days, /\*1\* - segunda, 05\/10/, 'com morango (2 dias): sábado não, domingo não tem entrega');
+  assert.doesNotMatch(days, /sábado/);
+  const c = setup();
+  await c.say('menu');
+  assert.match((await c.say('1'))[0], /\*4\* - Morango Cravejado: R\$ 12,00 _\(encomenda com 2 dias de antecedência\)_/);
 });

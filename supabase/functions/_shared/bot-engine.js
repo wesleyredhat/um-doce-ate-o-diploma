@@ -5,7 +5,7 @@
 // handleMessage(msg, ctx) -> Promise<string[]>  (respostas a enviar, em ordem)
 //   msg: { phone, text, profileName, isGroup }
 //   ctx: adaptador de dados (ver README / whatsapp-bot/index.ts; findOrder e now são opcionais)
-import { spotOf, deliveryDates, dayLabel, deliveryText, COMBINE_LABEL } from './delivery.js';
+import { spotOf, deliveryDates, leadOf, dayLabel, deliveryText, COMBINE_LABEL } from './delivery.js';
 import { orderPix } from './pix.js';
 
 const brl = (v) => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
@@ -216,7 +216,8 @@ const AFTER_ORDER = '\n\nAgora vou conferir a agenda. Assim que eu confirmar, te
 function catalogText(products) {
   const groups = {};
   // "5 - Empadinha": sem o traço, o número da opção parece a quantidade ("5 empadinhas").
-  products.forEach((p, i) => (groups[p.category] ||= []).push(`*${i + 1}* - ${p.name}: ${brl(p.price)}`));
+  // Antecedência maior que 1 dia aparece no cardápio: quem combina a entrega também precisa saber.
+  products.forEach((p, i) => (groups[p.category] ||= []).push(`*${i + 1}* - ${p.name}: ${brl(p.price)}${Number(p.lead_days) > 1 ? ` _(encomenda com ${p.lead_days} dias de antecedência)_` : ''}`));
   return Object.entries(groups)
     .map(([cat, lines]) => `*${cat === 'salgados' ? '🥧 Salgados' : '🍫 Doces'}*\n${lines.join('\n')}`)
     .join('\n\n');
@@ -517,7 +518,7 @@ export async function handleMessage(msg, ctx) {
         if (!day) return [daysAsk(s.dates || [])];
         return choose({ delivery: 'ponto', delivery_date: day, delivery_label: deliveryText({ delivery: 'ponto', delivery_date: day }, settings) });
       }
-      const dates = spotOf(settings) && t === '1' ? deliveryDates(settings, clock) : [];
+      const dates = spotOf(settings) && t === '1' ? deliveryDates(settings, clock, 4, leadOf(s.cart, products)) : [];
       if (dates.length) {
         await save({ ...s, state: 'delivery_day', dates });
         return [daysAsk(dates)];

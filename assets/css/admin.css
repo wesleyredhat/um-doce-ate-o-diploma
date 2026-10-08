@@ -273,3 +273,6 @@ fieldset.recipe legend small { font-weight: 600; color: var(--ink-soft); }
 .rline__cost { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--choc); }
 @media (max-width: 480px) { .rline { grid-template-columns: 1fr 72px 24px auto; } .rline__cost { display: none; } }
 .pcard__nums small + b + small, .pcard__nums b + small { text-transform: none; font-weight: 600; }
+.lead-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; color: var(--ink-soft); }
+.lead-field .input { width: 80px; }
+.lead-field small { font-weight: 600; flex-basis: 100%; }

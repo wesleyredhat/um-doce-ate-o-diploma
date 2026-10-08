@@ -1,7 +1,7 @@
 // npm test: forma de entrega (datas com entrega no ponto, textos).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deliveryDates, dayLabel, deliveryText, spotOf, COMBINE_LABEL } from '../supabase/functions/_shared/delivery.js';
+import { deliveryDates, dayLabel, deliveryText, spotOf, leadOf, COMBINE_LABEL } from '../supabase/functions/_shared/delivery.js';
 
 const SPOT = { delivery_spot: { label: 'Na faculdade, em dia de aula', days: [1, 2, 3, 5] } };
 const FRI_NOON = Date.parse('2026-10-02T12:00:00-03:00'); // sexta-feira
@@ -33,4 +33,16 @@ test('textos', () => {
   assert.equal(deliveryText({ delivery: 'ponto', delivery_date: '2026-10-09' }, SPOT), 'Na faculdade, em dia de aula · sexta, 09/10');
   assert.equal(deliveryText({ delivery: 'combinar' }, SPOT), COMBINE_LABEL);
   assert.equal(deliveryText({}, SPOT), COMBINE_LABEL);
+});
+
+test('antecedência: a maior do carrinho; morango com 2 dias empurra a primeira data', () => {
+  const products = [{ id: 'b', lead_days: 1 }, { id: 'm', lead_days: 2 }, { id: 'x' }];
+  assert.equal(leadOf([{ product_id: 'b' }], products), 1);
+  assert.equal(leadOf([{ product_id: 'b' }, { product_id: 'm' }], products), 2);
+  assert.equal(leadOf([{ product_id: 'x' }], products), 1, 'produto sem antecedência cadastrada: 1 dia');
+  assert.equal(leadOf([], products), 1);
+  const SPOT2 = { delivery_spot: { label: 'Na faculdade', days: [2, 3, 5] } };
+  const MON = Date.parse('2026-10-05T10:00:00-03:00'); // segunda
+  assert.deepEqual(deliveryDates(SPOT2, MON, 2, 1), ['2026-10-06', '2026-10-07'], 'segunda, 1 dia: já dá terça');
+  assert.deepEqual(deliveryDates(SPOT2, MON, 2, 2), ['2026-10-07', '2026-10-09'], 'segunda, 2 dias: terça não dá, primeira é quarta');
 });

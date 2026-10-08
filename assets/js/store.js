@@ -6,7 +6,7 @@ import { CONFIG, IS_DEMO } from './config.js';
 import { uid, orderCode, normalizePhone, sha256 } from './utils.js';
 import { quoteCoupon, phoneKey, normCode } from './coupons.js';
 import { customersFromOrders } from './campaigns.js';
-import { deliveryDates, DELIVERY_MAX_DAYS } from '../../supabase/functions/_shared/delivery.js';
+import { deliveryDates, leadOf, DELIVERY_MAX_DAYS } from '../../supabase/functions/_shared/delivery.js';
 
 export const STATUSES = [
   { id: 'novo', label: 'Novo', color: 'var(--berry)' },
@@ -58,6 +58,7 @@ function seedDemo() {
   const ingredients = [ing('Leite condensado', 395, 'g', 7), ing('Chocolate 50%', 1, 'kg', 39.99), ing('Granulado', 1, 'kg', 29.99), ing('Forminha', 100, 'un', 8)];
   Object.assign(products[0], { cost: 0.5, recipe: { yield: 25, items: [[0, 395], [1, 40], [2, 60], [3, 25]].map(([i, qty]) => ({ ingredient_id: ingredients[i].id, qty })) } });
   products[2].sold_by = 'caixinha';
+  products.forEach((p) => { p.lead_days = /cravejado/i.test(p.name) ? 2 : 1; });
   write('ingredients', ingredients);
   const names = ['Ana Clara', 'Bruno', 'Camila', 'Diego', 'Eduarda', 'Felipe', 'Gabriela', 'Henrique', 'Isabela', 'João Pedro',
     'Larissa', 'Marina', 'Natália', 'Otávio', 'Paula', 'Rafael', 'Sofia', 'Thiago', 'Vitória', 'Yasmin'];
@@ -172,7 +173,8 @@ const DemoStore = {
     order.paid = !!paid; // demonstração: quem chama é sempre o painel
     // Mesma regra de place_order: um dos dias marcados em Ajustes, de amanhã até 14 dias.
     if (delivery === 'ponto') {
-      if (!deliveryDates(read('settings', {}), Date.now(), DELIVERY_MAX_DAYS).includes(delivery_date)) throw new Error('Escolha um dos dias de entrega disponíveis');
+      const lead = leadOf(items, products);
+      if (!deliveryDates(read('settings', {}), Date.now(), DELIVERY_MAX_DAYS, lead).includes(delivery_date)) throw new Error('Escolha um dos dias de entrega disponíveis');
       Object.assign(order, { delivery, delivery_date });
     }
     const subtotal = order.total;
@@ -357,11 +359,11 @@ const SupabaseStore = {
     return data.session?.user ?? null;
   },
 
-  // O site (anônimo) só pode ler estas colunas (custo e receita são da loja); banco ainda sem sold_by: lê sem ele.
+  // O site (anônimo) só pode ler estas colunas (custo e receita são da loja); banco ainda sem as colunas novas: lê sem elas.
   async listProducts({ all = false } = {}) {
     if (all) return must(await sb.from('products').select('*').order('sort'));
     const cols = 'id, name, category, description, price, image, badge, active, featured, sort';
-    const r = await sb.from('products').select(`${cols}, sold_by`).eq('active', true).order('sort');
+    const r = await sb.from('products').select(`${cols}, sold_by, lead_days`).eq('active', true).order('sort');
     if (r.error?.code === '42703') return must(await sb.from('products').select(cols).eq('active', true).order('sort'));
     return must(r);
   },

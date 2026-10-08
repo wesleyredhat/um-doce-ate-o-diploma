@@ -167,6 +167,8 @@ body::before {
 .dopt:has(input:checked) { border-color: var(--caramel); box-shadow: 0 0 0 3px rgba(185, 138, 99, 0.18); }
 .dopt input { accent-color: var(--choc); width: 18px; height: 18px; flex: none; margin: 0; }
 .ddays { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 4px 4px; }
+.delivery-lead { margin: 0 0 4px 4px; }
+.lead-note { display: block; font-size: 0.8rem; font-weight: 700; color: var(--cocoa); margin-top: 2px; }
 .dday { position: relative; }
 .dday input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .dday span { display: inline-block; padding: 0.45em 0.9em; border-radius: 999px; background: var(--sand); color: var(--choc); font-weight: 700; font-size: 0.88rem; }

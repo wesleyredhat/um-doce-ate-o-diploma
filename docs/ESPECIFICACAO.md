@@ -59,7 +59,7 @@ Bot:     menu → 1 Fazer encomenda · 2 Cardápio · 3 Novidades · 4 Receber n
 Cliente: 1 → número do produto → quantidade → (mais itens | 0 finalizar) → nome (ou 1 = nome do perfil)
 Bot:     resumo + total → 1 Confirmar · 2 Adicionar · 3 Cancelar
 Cliente: 1
-Bot:     Como prefere receber? 1 Na faculdade (→ próximas 4 datas: ter, qua, sex) · 2 Outro local ou retirada
+Bot:     Como prefere receber? 1 Na faculdade (→ próximas 4 datas ter, qua, sex, depois da antecedência do pedido) · 2 Outro local ou retirada
 Bot:     resumo com 📍 Entrega → 1 Confirmar
 Bot:     🎓 Pedido DD-XXXX recebido! Total R$ … · vou conferir a agenda e confirmo com a chave Pix
 Painel:  Confirmar → Bot: pedido confirmado (itens, total, entrega, chave legível) + (2ª mensagem) só o Pix Copia e Cola com o valor
@@ -109,7 +109,7 @@ Números cadastrados em **Bot → Números autorizados**, com duas permissões:
 ## 3. Estrutura de dados
 
 ```sql
-products    (id, name, category[doces|salgados], description, price, cost, image, badge, active, featured, sort, sold_by, recipe jsonb)
+products    (id, name, category[doces|salgados], description, price, cost, image, badge, active, featured, sort, sold_by, lead_days 1-7, recipe jsonb)
              recipe = {yield, items: [{ingredient_id, qty}]} (qty em g, ml ou un) · o site (anon) lê só as colunas públicas, sem cost nem recipe
 ingredients (id, name, pack_qty, unit[g|kg|ml|l|un], pack_price, created_at, updated_at)   ← insumos, só admin
 orders      (id, code, customer_name, phone, items jsonb, total, cost_total, channel[web|whatsapp|grupo|balcao],

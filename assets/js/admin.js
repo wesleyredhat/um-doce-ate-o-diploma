@@ -11,7 +11,7 @@ import { couponState, couponLabel, normCode, phoneKey } from './coupons.js';
 import { loyaltyOf, capelosText, loyaltyMessage } from './loyalty.js';
 import { UNITS, SOLD_BY, baseUnit, packText, unitPriceText, recipeCost, costsToUpdate, usedIn, hasRecipe } from './recipes.js';
 import { AUDIENCES, PACE, pickAudience, campaignText, finishText, spDayStart } from './campaigns.js';
-import { WEEKDAYS, dayLabel, deliveryText, spotOf, deliveryDates, COMBINE_LABEL } from '../../supabase/functions/_shared/delivery.js';
+import { WEEKDAYS, dayLabel, deliveryText, spotOf, deliveryDates, leadOf, COMBINE_LABEL } from '../../supabase/functions/_shared/delivery.js';
 import { PIX_TYPES, orderPix, pixKey, pixKeyType } from '../../supabase/functions/_shared/pix.js';
 
 const S = { orders: [], products: [], news: [], settings: {}, admins: [], user: null, seen: new Set(), view: 'inicio', customers: null, customersAt: 0, coupons: [], couponsError: '', campaigns: [], campaignCfg: {} };
@@ -487,7 +487,7 @@ function orderDialog() {
   if (!active.length) { toast('Cadastre um produto ativo antes', 'err'); return; }
   const lines = [{ product_id: active[0].id, qty: 1 }];
   const spot = spotOf(S.settings);
-  const dates = deliveryDates(S.settings);
+  const dates = deliveryDates(S.settings, Date.now(), 4, leadOf(lines, S.products));
   openDialog(`<h2>Registrar pedido</h2><p class="hint">Para quem pediu pessoalmente, por telefone ou no Instagram. O pedido segue o mesmo caminho do site: confirmação, Pix, aviso de pronto e agradecimento pelo WhatsApp.</p>
     <form class="form" id="of">
       <div class="row">
@@ -518,6 +518,12 @@ function orderDialog() {
         <input class="input" type="number" min="1" value="${l.qty}" data-lq="${i}" style="width:84px" aria-label="Quantidade" />
         <button type="button" class="icon-btn" data-lr="${i}" aria-label="Remover">${icon('trash')}</button></div>`).join('');
       $('#mtotal', m).textContent = money(lines.reduce((s, l) => s + l.qty * (prodById(l.product_id)?.price || 0), 0));
+      // Datas pela maior antecedência dos produtos escolhidos (morango cravejado: 2 dias); mantém o dia se ainda vale.
+      const day = f.delivery_date;
+      if (day) {
+        const keep = day.value;
+        day.innerHTML = deliveryDates(S.settings, Date.now(), 4, leadOf(lines, S.products)).map((d) => `<option value="${d}" ${d === keep ? 'selected' : ''}>${dayLabel(d)}</option>`).join('');
+      }
     };
     draw();
     f.addEventListener('change', (e) => {
@@ -602,7 +608,7 @@ function viewProducts(v, signal) {
       return `<article class="pcard ${p.active ? '' : 'off'}">
         <img class="pcard__img" src="${esc(p.image || 'assets/img/logo.png')}" alt="" loading="lazy" />
         <div class="pcard__body">
-          <h3>${esc(p.name)} ${p.badge ? `<span class="badge">${esc(p.badge)}</span>` : ''}</h3>
+          <h3>${esc(p.name)} ${p.badge ? `<span class="badge">${esc(p.badge)}</span>` : ''}${Number(p.lead_days) > 1 ? ` <span class="ch" title="Antecedência para encomendar">⏰ ${Number(p.lead_days)} dias</span>` : ''}</h3>
           <div class="pcard__nums"><div><small>Cliente paga</small><b>${money(p.price)}</b><small>por ${esc(p.sold_by || 'un')}</small></div><div><small>Custa fazer</small><b>${money(p.cost)}</b><small>${hasRecipe(p) ? '🧾 pela receita' : 'digitado'}</small></div><div><small>Margem</small><b class="marg marg--${marginClass(m)}">${pct(m)}</b></div></div>
           <div class="pcard__actions">
             <label class="switch" title="Visível na loja"><input type="checkbox" data-act="${p.id}" ${p.active ? 'checked' : ''}/><i></i></label>
@@ -655,6 +661,7 @@ function productDialog(p = { name: '', category: 'doces', description: '', price
         <label class="field"><span>Vendido por</span><input class="input" name="sold_by" list="soldBy" maxlength="20" value="${esc(p.sold_by || 'un')}" /><datalist id="soldBy">${SOLD_BY.map((u) => `<option value="${u}">`).join('')}</datalist></label>
         <label class="field"><span>Selo</span><input class="input" name="badge" maxlength="18" placeholder="Ex.: Novidade" value="${esc(p.badge)}" /></label>
       </div>
+      <label class="field"><span>Antecedência para encomendar</span><span class="lead-field"><input class="input" name="lead_days" type="number" min="1" max="7" step="1" value="${p.lead_days || 1}" /> dia(s) <small class="hint">1 = a partir de amanhã. O site e o bot só oferecem datas depois disso.</small></span></label>
       <fieldset class="recipe"><legend>Receita <small>(quanto vai numa fornada)</small></legend>
         ${ings.length ? `<label class="recipe__yield"><span>A fornada rende</span><input class="input" name="yield" type="number" min="1" step="1" value="${p.recipe?.yield || 1}" /><b id="ryunit">${esc(p.sold_by || 'un')}</b></label>
         <div id="rlines" class="form"></div>
@@ -727,7 +734,7 @@ function productDialog(p = { name: '', category: 'doces', description: '', price
       e.preventDefault();
       const rc = cost();
       const rec = { ...(p.id ? { id: p.id } : {}), name: f.name.value.trim(), category: f.category.value, description: f.description.value.trim(),
-        price: +f.price.value, sold_by: f.sold_by.value.trim() || 'un', badge: f.badge.value.trim(), image: dataImg || f.image.value.trim() || p.image || '',
+        price: +f.price.value, sold_by: f.sold_by.value.trim() || 'un', lead_days: Math.min(7, Math.max(1, parseInt(f.lead_days.value, 10) || 1)), badge: f.badge.value.trim(), image: dataImg || f.image.value.trim() || p.image || '',
         cost: rc ? rc.unit : +f.cost.value || 0, ...(ings.length ? { recipe: rc ? recipe() : null } : {}) };
       try {
         await store.saveProduct(rec);

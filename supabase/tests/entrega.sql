@@ -53,6 +53,17 @@ begin
   perform pg_temp.fails_with('ponto', pg_temp.next_day(array[1, 2, 3, 5], 15), 'Escolha um dos dias de entrega disponíveis');
   perform pg_temp.fails_with('casa', null, 'Forma de entrega inválida');
 
+  -- antecedência do produto: com 2 dias, amanhã não vale e depois de amanhã sim (ponto aberto todos os dias, só neste teste)
+  update settings set value = jsonb_set(value, '{delivery_spot,days}', '[0, 1, 2, 3, 4, 5, 6]') where key = 'store';
+  update products set lead_days = 2 where id = '00000000-0000-4000-8000-0000000000b1';
+  perform pg_temp.fails_with('ponto', pg_temp.today() + 1, 'Escolha um dos dias de entrega disponíveis');
+  r := place_order('Gil Teste', '5500988886666', pg_temp.items(), 'web', '', null, 'ponto', pg_temp.today() + 2);
+  assert (select delivery_date = pg_temp.today() + 2 from orders where code = r->>'code'), 'com 2 dias de antecedência: ' || r::text;
+  update products set lead_days = 1 where id = '00000000-0000-4000-8000-0000000000b1';
+  r := place_order('Hana Teste', '5500988887770', pg_temp.items(), 'web', '', null, 'ponto', pg_temp.today() + 1);
+  assert (select delivery_date = pg_temp.today() + 1 from orders where code = r->>'code'), 'com 1 dia, amanhã vale: ' || r::text;
+  update settings set value = jsonb_set(value, '{delivery_spot,days}', '[1, 2, 3, 5]') where key = 'store';
+
   -- "já pago" só vale para a loja: pelo site (anônimo) é ignorado
   r := place_order('Dani Teste', '5500988884444', pg_temp.items(), 'web', '', null, 'combinar', null, true);
   assert (select not paid from orders where code = r->>'code'), 'cliente não marca o próprio pedido como pago';

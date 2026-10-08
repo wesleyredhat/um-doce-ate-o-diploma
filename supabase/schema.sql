@@ -30,6 +30,15 @@ create table if not exists public.products (
 -- (assets/js/recipes.js). Sem receita, cost é digitado à mão. sold_by aparece no site depois do preço ("/caixinha").
 alter table public.products add column if not exists recipe jsonb;
 alter table public.products add column if not exists sold_by text not null default 'un' check (char_length(sold_by) between 1 and 20);
+-- Antecedência para encomendar, em dias (1 = a partir de amanhã). Na primeira vez, os morangos cravejados ficam
+-- com 2 dias, como a loja pediu em 07/10/2026; depois vale o que estiver no cadastro do produto.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'products' and column_name = 'lead_days') then
+    alter table public.products add column lead_days int not null default 1 check (lead_days between 1 and 7);
+    update public.products set lead_days = 2 where name ilike '%cravejado%';
+  end if;
+end $$;
 
 -- Insumos: o que se compra (ingrediente ou embalagem), com o tamanho da embalagem e o preço pago.
 create table if not exists public.ingredients (
@@ -262,6 +271,7 @@ declare
   r record;
   v_accepting boolean;
   v_spot jsonb;
+  v_lead int := 1;
   v_today date := (now() at time zone 'America/Sao_Paulo')::date;
 begin
   select coalesce((value->>'accepting')::boolean, true), value->'delivery_spot' into v_accepting, v_spot from settings where key = 'store';
@@ -275,19 +285,21 @@ begin
   end if;
 
   for r in
-    select p.id, p.name, p.price, p.cost, least(greatest((i->>'qty')::int, 1), 500) as qty
+    select p.id, p.name, p.price, p.cost, p.lead_days, least(greatest((i->>'qty')::int, 1), 500) as qty
     from jsonb_array_elements(p_items) i
     join products p on p.id = (i->>'product_id')::uuid and p.active
   loop
     v_items := v_items || jsonb_build_object('product_id', r.id, 'name', r.name, 'qty', r.qty, 'unit_price', r.price, 'unit_cost', r.cost);
     v_total := v_total + r.qty * r.price;
     v_cost := v_cost + r.qty * r.cost;
+    v_lead := greatest(v_lead, r.lead_days);
   end loop;
   if jsonb_array_length(v_items) = 0 then raise exception 'Produto indisponível'; end if;
 
-  -- Entrega no ponto: um dos dias marcados em Ajustes, de amanhã até 14 dias (mesma regra de delivery.js).
+  -- Entrega no ponto: um dos dias marcados em Ajustes, respeitando a maior antecedência dos produtos
+  -- (1 = a partir de amanhã), até 14 dias (mesma regra de delivery.js).
   if coalesce(p_delivery, 'combinar') not in ('ponto', 'combinar') then raise exception 'Forma de entrega inválida'; end if;
-  if p_delivery = 'ponto' and (p_delivery_date is null or p_delivery_date <= v_today or p_delivery_date > v_today + 14
+  if p_delivery = 'ponto' and (p_delivery_date is null or p_delivery_date < v_today + v_lead or p_delivery_date > v_today + 14
      or not coalesce(v_spot->'days' @> to_jsonb(extract(dow from p_delivery_date)::int), false)) then
     raise exception 'Escolha um dos dias de entrega disponíveis';
   end if;
@@ -461,7 +473,7 @@ drop policy if exists "products admin write" on public.products;
 create policy "products admin write" on public.products for all using (public.is_admin()) with check (public.is_admin());
 -- O site (anônimo) lê só o que mostra: custo e receita ficam para a loja (shop.js pede estas colunas).
 revoke select on public.products from anon;
-grant select (id, name, category, description, price, image, badge, active, featured, sort, sold_by) on public.products to anon;
+grant select (id, name, category, description, price, image, badge, active, featured, sort, sold_by, lead_days) on public.products to anon;
 drop policy if exists "ingredients admin" on public.ingredients;
 create policy "ingredients admin" on public.ingredients for all using (public.is_admin()) with check (public.is_admin());
 

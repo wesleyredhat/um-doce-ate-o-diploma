@@ -16,13 +16,17 @@ const spToday = (now) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/S
 const addDays = (iso, n) => new Date(Date.parse(`${iso}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
 const weekday = (iso) => new Date(`${iso}T12:00:00Z`).getUTCDay();
 
-// Próximas datas com entrega no ponto, a partir de amanhã (horário de Brasília).
-export function deliveryDates(settings, now = Date.now(), count = 4) {
+// Antecedência do pedido: a maior entre os produtos do carrinho (products.lead_days; sem valor, 1 dia).
+// items = [{ product_id }], products = [{ id, lead_days }]
+export const leadOf = (items = [], products = []) => Math.max(1, ...items.map((i) => Number(products.find((p) => p.id === i.product_id)?.lead_days ?? 1)));
+
+// Próximas datas com entrega no ponto, a partir de hoje + antecedência (padrão: amanhã), no horário de Brasília.
+export function deliveryDates(settings, now = Date.now(), count = 4, lead = 1) {
   const spot = spotOf(settings);
   if (!spot) return [];
   const today = spToday(now);
   const out = [];
-  for (let i = 1; i <= DELIVERY_MAX_DAYS && out.length < count; i++) {
+  for (let i = Math.max(0, lead); i <= DELIVERY_MAX_DAYS && out.length < count; i++) {
     const d = addDays(today, i);
     if (spot.days.includes(weekday(d))) out.push(d);
   }
